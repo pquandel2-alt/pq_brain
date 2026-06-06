@@ -29,6 +29,9 @@ Read [`CLAUDE.md`](./CLAUDE.md) first — it explains the entire workflow. Also 
 4. **When something changes:** Update via `PUT /api/nodes/:id` or `POST /api/nodes`
 5. **Never re-derive** — if it's in a node, trust it
 
+   <img width="1905" height="882" alt="grafik" src="https://github.com/user-attachments/assets/791b946f-ebd0-4c33-ba2d-6b86d745840a" />
+
+
 ## Standard 7 nodes included
 
 - **Start** — Entry point explaining the system
