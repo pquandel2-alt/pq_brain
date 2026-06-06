@@ -1,0 +1,50 @@
+{
+  "nodes": [
+    {
+      "id": "start",
+      "label": "Start",
+      "type": "memory",
+      "content": "## Entry Point\n\nThis is the AI agent's entry point node.\n\nAt the start of every conversation, read `GET /api/brain` and use the node contents as context.\nWhen something changes (new project, new preference, corrected fact), update the relevant node via `PUT /api/nodes/:id`.\nAdd new nodes with `POST /api/nodes` and link related ones with `POST /api/links`.",
+      "tags": ["meta"],
+      "created": "2025-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "user-profile",
+      "label": "User Profile",
+      "type": "memory",
+      "content": "## User Profile\n\nFill this with what you know about the user:\n- Language / preferred communication style\n- Tech stack and experience level\n- Goals and current focus\n\n**Why:** Tailor every response to who is actually asking.",
+      "tags": ["user"],
+      "created": "2025-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "preferences",
+      "label": "Preferences & Feedback",
+      "type": "memory",
+      "content": "## Preferences & Feedback\n\nRecord corrections and confirmed approaches here.\n\nFormat each entry:\n- **Rule:** what to do (or avoid)\n- **Why:** the reason the user gave\n- **Applies to:** when this kicks in",
+      "tags": ["feedback"],
+      "created": "2025-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "projects",
+      "label": "Projects",
+      "type": "project",
+      "content": "## Active Projects\n\nList ongoing projects here. For each:\n- Name & path\n- Goal\n- Current status\n- Key decisions made",
+      "tags": ["projects"],
+      "created": "2025-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "references",
+      "label": "References",
+      "type": "reference",
+      "content": "## External References\n\nPointers to external systems — APIs, dashboards, documentation, issue trackers.\n\nFormat: `Name — URL or path — what it's for`",
+      "tags": ["references"],
+      "created": "2025-01-01T00:00:00.000Z"
+    }
+  ],
+  "links": [
+    { "source": "start", "target": "user-profile", "label": "" },
+    { "source": "start", "target": "preferences", "label": "" },
+    { "source": "start", "target": "projects", "label": "" },
+    { "source": "start", "target": "references", "label": "" }
+  ]
+}

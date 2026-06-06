@@ -1,0 +1,4 @@
+node_modules/
+brain.log
+brain.pid
+data/brain.json

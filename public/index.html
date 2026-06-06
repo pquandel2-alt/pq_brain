@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <meta name="theme-color" content="#0a0a0f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Brain</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+  <!-- Header -->
+  <header id="header">
+    <div class="header-left">
+      <span class="logo">&#9679; Brain</span>
+    </div>
+    <div class="header-center">
+      <div class="search-wrap">
+        <input type="text" id="search" placeholder="Suchen..." autocomplete="off" spellcheck="false">
+        <button id="search-clear" class="icon-btn hidden">&#10005;</button>
+      </div>
+    </div>
+    <div class="header-right">
+      <button id="btn-import" class="icon-btn" title="Markdown importieren">&#8659;</button>
+      <button id="btn-add" class="fab-mini" title="Neuer Knoten">+</button>
+    </div>
+  </header>
+
+  <!-- Filter bar -->
+  <div id="filter-bar">
+    <button class="chip active" data-type="all">Alle</button>
+    <button class="chip" data-type="memory">Memory</button>
+    <button class="chip" data-type="note">Notiz</button>
+    <button class="chip" data-type="idea">Idee</button>
+    <button class="chip" data-type="project">Projekt</button>
+  </div>
+
+  <!-- 3D Graph Container -->
+  <div id="graph-container"></div>
+
+  <!-- Link-mode banner -->
+  <div id="link-banner" class="hidden">
+    Ziel-Knoten klicken &mdash; <span id="link-source-label"></span>
+    <button id="link-cancel">Abbrechen</button>
+  </div>
+
+  <!-- Side panel / Bottom sheet -->
+  <aside id="panel" class="hidden">
+    <div id="panel-handle"></div>
+    <div id="panel-header">
+      <div id="panel-meta">
+        <span id="panel-type-badge"></span>
+        <div id="panel-tags"></div>
+      </div>
+      <div class="panel-actions">
+        <button id="btn-link-mode" title="Mit anderem Knoten verbinden">&#8596; Verbinden</button>
+        <button id="btn-delete" title="Knoten löschen">&#128465;</button>
+        <button id="btn-panel-close">&#10005;</button>
+      </div>
+    </div>
+    <input type="text" id="panel-label" class="panel-title-input" placeholder="Titel">
+    <div id="panel-editor-wrap">
+      <div id="panel-tabs">
+        <button class="tab-btn active" data-tab="edit">Bearbeiten</button>
+        <button class="tab-btn" data-tab="preview">Vorschau</button>
+        <button class="tab-btn" data-tab="links">Verknüpfungen</button>
+      </div>
+      <textarea id="panel-content" placeholder="Markdown-Inhalt..."></textarea>
+      <div id="panel-preview" class="hidden markdown-body"></div>
+      <div id="panel-links-list" class="hidden"></div>
+    </div>
+    <div id="panel-footer">
+      <button id="btn-save" class="btn-primary">Speichern</button>
+    </div>
+  </aside>
+
+  <!-- Create Modal -->
+  <div id="modal-create" class="modal hidden">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h2>Neuer Knoten</h2>
+        <button class="icon-btn" id="btn-modal-close">&#10005;</button>
+      </div>
+      <label>Titel
+        <input type="text" id="new-label" placeholder="Titel..." autocomplete="off">
+      </label>
+      <label>Typ
+        <select id="new-type">
+          <option value="note">Notiz</option>
+          <option value="idea">Idee</option>
+          <option value="project">Projekt</option>
+          <option value="memory">Memory</option>
+        </select>
+      </label>
+      <label>Tags (kommagetrennt)
+        <input type="text" id="new-tags" placeholder="tag1, tag2">
+      </label>
+      <label>Inhalt (Markdown)
+        <textarea id="new-content" rows="6" placeholder="# Titel&#10;&#10;Inhalt..."></textarea>
+      </label>
+      <div class="modal-footer">
+        <button id="btn-create-cancel" class="btn-secondary">Abbrechen</button>
+        <button id="btn-create-confirm" class="btn-primary">Erstellen</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Import Modal -->
+  <div id="modal-import" class="modal hidden">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h2>Markdown importieren</h2>
+        <button class="icon-btn" id="btn-import-close">&#10005;</button>
+      </div>
+      <p class="hint">Alle <code>.md</code>-Dateien im angegebenen Ordner werden importiert. YAML-Frontmatter und <code>[[Wikilinks]]</code> werden erkannt.</p>
+      <label>Pfad auf der VM
+        <input type="text" id="import-path" placeholder="~/.claude/projects/.../memory">
+      </label>
+      <div class="import-shortcuts">
+        <span>Schnellwahl:</span>
+        <button class="chip" data-path="~/.claude/projects/-home-philipp-ha-widgets/memory">HA Memory</button>
+      </div>
+      <div id="import-result" class="hidden"></div>
+      <div class="modal-footer">
+        <button id="btn-import-cancel" class="btn-secondary">Abbrechen</button>
+        <button id="btn-import-confirm" class="btn-primary">Importieren</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete Confirm Modal -->
+  <div id="modal-delete" class="modal hidden">
+    <div class="modal-box modal-box--sm">
+      <h2>Knoten löschen?</h2>
+      <p id="delete-label-text"></p>
+      <div class="modal-footer">
+        <button id="btn-delete-cancel" class="btn-secondary">Abbrechen</button>
+        <button id="btn-delete-confirm" class="btn-danger">Löschen</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast"></div>
+
+  <script src="//unpkg.com/3d-force-graph@1.73.0/dist/3d-force-graph.min.js"></script>
+  <script src="//unpkg.com/markdown-it@13.0.2/dist/markdown-it.min.js"></script>
+  <script src="/app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js');
+    }
+  </script>
+</body>
+</html>
