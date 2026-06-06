@@ -7,11 +7,12 @@ echo
 # Check if running as root
 if [[ $EUID -ne 0 ]]; then
   echo "⚠️  This script needs sudo. Run:"
-  echo "   sudo ./setup-service.sh"
+  echo "   sudo /home/philipp/pq_brain/setup-service.sh"
   exit 1
 fi
 
-SERVICE_FILE="systemd/pq-brain.service"
+SCRIPT_DIR="/home/philipp/pq_brain"
+SERVICE_FILE="$SCRIPT_DIR/systemd/pq-brain.service"
 INSTALL_PATH="/etc/systemd/system/pq-brain.service"
 
 if [ ! -f "$SERVICE_FILE" ]; then
