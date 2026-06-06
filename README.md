@@ -1,8 +1,10 @@
 # pq_brain
 
-A lightweight persistent memory server for AI agents — and a 3D knowledge graph you can browse in any browser.
+A lightweight persistent memory server for AI agents. Also a 3D knowledge graph you can explore in any browser.
 
-**Core idea:** An AI agent reads `GET /api/brain` at the start of every conversation and uses the node contents as long-term context. When it learns something new, it writes back via the REST API. The graph persists across conversations, sessions, and model resets.
+**Core idea:** An AI agent reads the entire knowledge graph at the start of every conversation and uses all node content as long-term context. When it learns something new, it writes back via REST API. The graph persists across conversations, sessions, and model resets.
+
+**This is the single source of truth for project context.**
 
 ## Quick start
 
@@ -13,25 +15,29 @@ node server.js          # runs on port 3000 by default
 # or: PORT=3002 node server.js
 ```
 
-Open `http://localhost:3000` in a browser for the 3D visualization.
+Open `http://localhost:3000` in a browser for the 3D visualization + file explorer.
 
-## How an AI agent uses this
+## For AI agents
 
-1. **Read at conversation start**
-   ```bash
-   curl -s http://localhost:3000/api/brain
-   ```
-   Every node's `content` field is Markdown — treat it as context.
+Read [`CLAUDE.md`](./CLAUDE.md) first — it explains the entire workflow. Also [`AI-AGENT-SETUP.md`](./AI-AGENT-SETUP.md) for external agents using this repo.
 
-2. **Write when something changes**
-   - New fact learned → `POST /api/nodes`
-   - Existing node outdated → `PUT /api/nodes/:id`
-   - Fact no longer relevant → `DELETE /api/nodes/:id`
-   - Two concepts are related → `POST /api/links`
+**TL;DR:**
 
-3. **Never re-derive what's already stored** — if it's in a node, trust it (but verify against the live environment when acting on it).
+1. **At conversation start:** `curl -s http://localhost:3000/api/brain`
+2. **Read all 7 nodes** (Start, User Profil, Feedback, Projekte, Ideen, Notizen, Referenzen)
+3. **Use their content as context**
+4. **When something changes:** Update via `PUT /api/nodes/:id` or `POST /api/nodes`
+5. **Never re-derive** — if it's in a node, trust it
 
-For Claude Code specifically: see [`CLAUDE.md`](./CLAUDE.md).
+## Standard 7 nodes included
+
+- **Start** — Entry point explaining the system
+- **User Profil** — User facts, environment, experience, GitHub account
+- **Feedback** — What works, what to avoid, confirmed approaches
+- **Projekte** — Active projects, goals, versions, status
+- **Ideen** — Unvalidated ideas, future work
+- **Notizen** — Technical patterns, architecture decisions, how-tos
+- **Referenzen** — External pointers (APIs, tooling, GitHub repos)
 
 ## REST API
 
