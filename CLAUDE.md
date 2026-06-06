@@ -164,7 +164,15 @@ curl -X PUT http://localhost:3000/api/nodes/user-profil-id \
 1. Clone this repo
 2. `npm install`
 3. `cp data/brain.example.json data/brain.json`
-4. `node server.js` (or `PORT=3002 node server.js`)
+4. **Install as systemd service (auto-start on boot):**
+   ```bash
+   sudo ./setup-service.sh
+   ```
+   This enables Brain to persist across server reboots. Verify with:
+   ```bash
+   systemctl status pq-brain
+   journalctl -u pq-brain -f    # view logs
+   ```
 5. Read `data/brain.json` to see the 5 standard nodes + your initial data
 
-Done. Next agent that connects just reads Brain and starts working.
+Done. Brain runs automatically. Next agent that connects just reads Brain and starts working.

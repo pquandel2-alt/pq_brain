@@ -1,0 +1,18 @@
+[Unit]
+Description=pq_brain - AI Agent Knowledge Graph Server
+After=network.target
+
+[Service]
+Type=simple
+User=philipp
+WorkingDirectory=/home/philipp/pq_brain
+ExecStart=/usr/bin/node /home/philipp/pq_brain/server.js
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/philipp/pq_brain/brain.log
+StandardError=append:/home/philipp/pq_brain/brain.log
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="NODE_ENV=production"
+
+[Install]
+WantedBy=multi-user.target

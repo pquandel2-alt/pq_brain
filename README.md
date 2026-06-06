@@ -93,11 +93,26 @@ Frontmatter fields recognized: `name`, `title`, `type`, `tags`. `[[wikilinks]]` 
 
 Connect to `ws://localhost:3000` — you receive the full graph on connect and a `{ type: "update", data }` message on every change.
 
-## Setup tip: auto-start on boot
+## Auto-start on boot (systemd service)
 
+Brain runs as a systemd service so it restarts automatically after server reboots.
+
+**Setup (one-time):**
 ```bash
-# Add to crontab: crontab -e
-@reboot cd /path/to/pq_brain && node server.js >> brain.log 2>&1 &
+sudo ./setup-service.sh
+```
+
+**Verify:**
+```bash
+systemctl status pq-brain
+journalctl -u pq-brain -f    # view live logs
+```
+
+**Manual control:**
+```bash
+systemctl restart pq-brain
+systemctl stop pq-brain
+systemctl disable pq-brain   # disable auto-start
 ```
 
 ## Data

@@ -183,11 +183,40 @@ POST   /api/import                   → .md-Dateien importieren (YAML-Frontmatt
 
 ## 9. Betrieb
 
-### Auto-Start auf Boot
+### ⭐ Auto-Start auf Boot (systemd Service)
+
+Brain muss als systemd-Service laufen, damit es nach Server-Neustart automatisch wieder startet.
+
+**Einrichtung (einmalig, braucht sudo):**
 
 ```bash
-# crontab -e
-@reboot cd /path/to/pq_brain && node server.js >> brain.log 2>&1 &
+sudo ./setup-service.sh
+```
+
+Das Script:
+1. Installiert `/etc/systemd/system/pq-brain.service`
+2. Aktiviert Auto-Start mit `systemctl enable pq-brain`
+3. Startet den Service sofort
+
+**Status prüfen:**
+
+```bash
+systemctl status pq-brain
+```
+
+**Logs ansehen:**
+
+```bash
+journalctl -u pq-brain -f       # live
+journalctl -u pq-brain -n 100   # letzte 100 Zeilen
+```
+
+**Service kontrollieren:**
+
+```bash
+systemctl restart pq-brain      # neu starten
+systemctl stop pq-brain         # stoppen
+systemctl disable pq-brain      # Auto-Start deaktivieren
 ```
 
 ### Backup
