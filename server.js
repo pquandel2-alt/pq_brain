@@ -7,13 +7,127 @@ const { randomUUID } = require('crypto');
 
 const app = express();
 const DATA_FILE = path.join(__dirname, 'data', 'brain.json');
+const BACKUP_DIR = path.join(__dirname, 'data', 'backups');
+const LOG_FILE = path.join(__dirname, 'logs', 'brain.log');
 const ALLOWED_TYPES = ['memory', 'note', 'idea', 'project', 'reference'];
+const MAX_BACKUPS = 7;
 
-// Write queue to prevent race conditions (read-modify-write atomicity)
+// Ensure directories exist
+[path.dirname(BACKUP_DIR), path.dirname(LOG_FILE)].forEach(dir => {
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+});
+
+// Logger
+const logger = {
+  log(level, message, context = {}) {
+    const timestamp = new Date().toISOString();
+    const entry = { timestamp, level, message, ...context };
+    const line = JSON.stringify(entry);
+
+    console.log(`[${level}] ${timestamp} ${message}`);
+    try {
+      fs.appendFileSync(LOG_FILE, line + '\n', 'utf8');
+    } catch (err) {
+      console.error('Failed to write log:', err.message);
+    }
+  },
+  info(msg, ctx) { this.log('INFO', msg, ctx); },
+  warn(msg, ctx) { this.log('WARN', msg, ctx); },
+  error(msg, ctx) { this.log('ERROR', msg, ctx); },
+  debug(msg, ctx) { this.log('DEBUG', msg, ctx); },
+};
+
+// Health tracking
+const health = {
+  startTime: new Date(),
+  lastWrite: null,
+  lastError: null,
+  writeCount: 0,
+  errorCount: 0,
+};
+
+// Backup management
+function getBackupFilename() {
+  const now = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+  return `brain.backup.${now}.json`;
+}
+
+function createBackup(data) {
+  try {
+    if (!fs.existsSync(BACKUP_DIR)) {
+      fs.mkdirSync(BACKUP_DIR, { recursive: true });
+    }
+
+    const backupFile = path.join(BACKUP_DIR, getBackupFilename());
+    fs.writeFileSync(backupFile, JSON.stringify(data, null, 2), 'utf8');
+
+    // Cleanup old backups (keep only MAX_BACKUPS)
+    const files = fs.readdirSync(BACKUP_DIR)
+      .filter(f => f.startsWith('brain.backup.'))
+      .sort()
+      .reverse();
+
+    for (let i = MAX_BACKUPS; i < files.length; i++) {
+      fs.unlinkSync(path.join(BACKUP_DIR, files[i]));
+    }
+
+    logger.debug('Backup created', { file: getBackupFilename() });
+  } catch (err) {
+    logger.error('Backup failed', { error: err.message });
+  }
+}
+
+function listBackups() {
+  try {
+    if (!fs.existsSync(BACKUP_DIR)) return [];
+    return fs.readdirSync(BACKUP_DIR)
+      .filter(f => f.startsWith('brain.backup.'))
+      .sort()
+      .reverse()
+      .map(f => ({
+        filename: f,
+        timestamp: f.match(/brain\.backup\.(.+)\.json/)?.[1],
+        created: fs.statSync(path.join(BACKUP_DIR, f)).mtime.toISOString(),
+      }));
+  } catch (err) {
+    logger.error('List backups failed', { error: err.message });
+    return [];
+  }
+}
+
+function restoreBackup(filename) {
+  try {
+    const backupPath = path.join(BACKUP_DIR, filename);
+    if (!fs.existsSync(backupPath)) {
+      throw new Error('Backup not found');
+    }
+    const data = JSON.parse(fs.readFileSync(backupPath, 'utf8'));
+
+    // Validate structure
+    if (!data.nodes || !Array.isArray(data.nodes)) {
+      throw new Error('Invalid backup structure');
+    }
+
+    // Write restored data
+    const tmp = DATA_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
+    fs.renameSync(tmp, DATA_FILE);
+
+    logger.info('Backup restored', { filename });
+    return data;
+  } catch (err) {
+    logger.error('Restore failed', { error: err.message, filename });
+    throw err;
+  }
+}
+
+// Write queue to prevent race conditions
 let writeQueue = Promise.resolve();
 function enqueueWrite(fn) {
   writeQueue = writeQueue.then(fn).catch(err => {
-    console.error('[WRITE ERROR]', err.message);
+    health.errorCount++;
+    health.lastError = err.message;
+    logger.error('Write error', { error: err.message });
     throw err;
   });
   return writeQueue;
@@ -23,7 +137,7 @@ function readBrain() {
   try {
     return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
   } catch (err) {
-    console.warn('[READ WARN]', err.message);
+    logger.warn('Read failed, returning empty', { error: err.message });
     return { nodes: [], links: [] };
   }
 }
@@ -32,6 +146,12 @@ function writeBrainSync(data) {
   const tmp = DATA_FILE + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
   fs.renameSync(tmp, DATA_FILE);
+
+  health.lastWrite = new Date();
+  health.writeCount++;
+
+  // Create backup on every write (or you could do daily)
+  createBackup(data);
 }
 
 function broadcast(data) {
@@ -41,7 +161,7 @@ function broadcast(data) {
     try {
       if (client.readyState === 1) client.send(msg);
     } catch (err) {
-      console.error('[WS SEND ERROR]', err.message);
+      logger.error('WS send error', { error: err.message });
       failed.push(client);
     }
   }
@@ -67,6 +187,25 @@ function validateTags(tags) {
   if (!Array.isArray(tags)) return [];
   return tags.map(t => String(t).trim()).filter(Boolean);
 }
+
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  const brain = readBrain();
+  res.json({
+    status: 'ok',
+    uptime: Math.floor((Date.now() - health.startTime.getTime()) / 1000),
+    lastWrite: health.lastWrite?.toISOString() || null,
+    lastError: health.lastError || null,
+    writeCount: health.writeCount,
+    errorCount: health.errorCount,
+    nodeCount: brain.nodes.length,
+    linkCount: brain.links.length,
+    version: '1.0.0',
+  });
+});
 
 app.get('/api/brain', (req, res) => {
   try {
@@ -96,6 +235,7 @@ app.post('/api/nodes', (req, res) => {
       brain.nodes.push(node);
       writeBrainSync(brain);
       broadcast(brain);
+      logger.info('Node created', { label, id: node.id });
       res.json(node);
     }).catch(err => {
       res.status(500).json({ error: 'Failed to create node' });
@@ -133,6 +273,7 @@ app.put('/api/nodes/:id', (req, res) => {
       brain.nodes[idx] = { ...brain.nodes[idx], ...updates, id };
       writeBrainSync(brain);
       broadcast(brain);
+      logger.info('Node updated', { id, fields: Object.keys(updates) });
       res.json(brain.nodes[idx]);
     }).catch(err => {
       res.status(500).json({ error: 'Failed to update node' });
@@ -153,12 +294,14 @@ app.delete('/api/nodes/:id', (req, res) => {
         res.status(404).json({ error: 'Node not found' });
         return;
       }
+      const label = brain.nodes[idx].label;
       brain.nodes.splice(idx, 1);
       brain.links = brain.links.filter(
         l => l.source !== id && l.target !== id
       );
       writeBrainSync(brain);
       broadcast(brain);
+      logger.info('Node deleted', { id, label });
       res.json({ ok: true });
     }).catch(err => {
       res.status(500).json({ error: 'Failed to delete node' });
@@ -182,7 +325,6 @@ app.post('/api/links', (req, res) => {
     enqueueWrite(() => {
       const brain = readBrain();
 
-      // Check if nodes exist
       if (!brain.nodes.some(n => n.id === source)) {
         res.status(404).json({ error: 'Source node not found' });
         return;
@@ -201,6 +343,7 @@ app.post('/api/links', (req, res) => {
         brain.links.push({ source, target, label });
         writeBrainSync(brain);
         broadcast(brain);
+        logger.info('Link created', { source, target });
       }
 
       res.json({ source, target, label });
@@ -229,10 +372,39 @@ app.delete('/api/links', (req, res) => {
       if (brain.links.length < before) {
         writeBrainSync(brain);
         broadcast(brain);
+        logger.info('Link deleted', { source, target });
       }
       res.json({ ok: true });
     }).catch(err => {
       res.status(500).json({ error: 'Failed to delete link' });
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Backup endpoints
+app.get('/api/backups', (req, res) => {
+  try {
+    res.json(listBackups());
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to list backups' });
+  }
+});
+
+app.post('/api/restore/:filename', (req, res) => {
+  try {
+    const filename = req.params.filename;
+    if (!filename.match(/^brain\.backup\.\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z?\.json$/)) {
+      return res.status(400).json({ error: 'Invalid filename' });
+    }
+
+    enqueueWrite(() => {
+      const data = restoreBackup(filename);
+      broadcast(data);
+      res.json({ ok: true, message: 'Restored from ' + filename });
+    }).catch(err => {
+      res.status(500).json({ error: err.message });
     });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -272,8 +444,6 @@ app.post('/api/import', (req, res) => {
       return res.status(400).json({ error: 'Invalid path' });
     }
 
-    // Security: check for path traversal (resolved path must be under a reasonable base)
-    // Allow imports only from user's home and /tmp to prevent escaping
     const homeDir = process.env.HOME || '/root';
     if (!resolvedPath.startsWith(homeDir) && !resolvedPath.startsWith('/tmp')) {
       return res.status(403).json({ error: 'Path outside allowed directories' });
@@ -300,7 +470,7 @@ app.post('/api/import', (req, res) => {
       let updated = 0;
 
       for (const file of files) {
-        if (file === 'MEMORY.md') continue; // skip index file
+        if (file === 'MEMORY.md') continue;
         try {
           const raw = fs.readFileSync(path.join(resolvedPath, file), 'utf8');
           const { meta, body } = parseFrontmatter(raw);
@@ -312,7 +482,7 @@ app.post('/api/import', (req, res) => {
           try {
             validateLabel(label);
           } catch {
-            console.warn(`[IMPORT] Skipping ${file}: invalid label`);
+            logger.warn('Import: skipped file', { file, reason: 'invalid label' });
             continue;
           }
 
@@ -333,11 +503,10 @@ app.post('/api/import', (req, res) => {
             imported++;
           }
         } catch (err) {
-          console.error(`[IMPORT] Error reading ${file}:`, err.message);
+          logger.error('Import: file read error', { file, error: err.message });
         }
       }
 
-      // Resolve [[wikilinks]] after all nodes exist
       let newLinks = 0;
       const labelMap = new Map(brain.nodes.map(n => [n.label, n]));
 
@@ -363,6 +532,7 @@ app.post('/api/import', (req, res) => {
 
       writeBrainSync(brain);
       broadcast(brain);
+      logger.info('Import completed', { imported, updated, links: newLinks });
       res.json({ imported, updated, links: newLinks, total: files.length });
     }).catch(err => {
       res.status(500).json({ error: 'Failed to import files' });
@@ -379,13 +549,21 @@ const wss = new WebSocketServer({ server });
 wss.on('connection', ws => {
   try {
     ws.send(JSON.stringify({ type: 'update', data: readBrain() }));
+    logger.debug('Client connected', { clients: wss.clients.size });
   } catch (err) {
-    console.error('[WS INIT ERROR]', err.message);
+    logger.error('WS init error', { error: err.message });
   }
 });
 
 server.listen(PORT, '0.0.0.0', () => {
+  logger.info('Brain server started', {
+    port: PORT,
+    dataFile: DATA_FILE,
+    backupDir: BACKUP_DIR,
+    logFile: LOG_FILE,
+  });
   console.log(`\n✅ Brain läuft auf Port ${PORT}`);
   console.log(`   Lokal:   http://localhost:${PORT}`);
-  console.log(`   Netzwerk: http://<VM-IP>:${PORT}\n`);
+  console.log(`   Health:  http://localhost:${PORT}/api/health`);
+  console.log(`   Backups: http://localhost:${PORT}/api/backups\n`);
 });
