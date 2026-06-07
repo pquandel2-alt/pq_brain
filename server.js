@@ -203,25 +203,26 @@ function filterBrainByTags(brain, tags) {
   return { nodes, links };
 }
 
-function getSmartBrain(brain) {
-  // Smart mode: Start node + all reachable nodes (recursive)
+function getSmartBrain(brain, depth = Infinity) {
+  // Smart mode: Start node + reachable nodes up to given depth
   const startNode = brain.nodes.find(n => n.label === 'Claude – Startpunkt' || n.label === 'Start');
   if (!startNode) return brain; // fallback to full
 
   const visited = new Set();
-  const toVisit = [startNode.id];
+  const toVisit = [{ id: startNode.id, d: 0 }];
   const nodeIds = new Set();
 
   while (toVisit.length > 0) {
-    const id = toVisit.shift();
+    const { id, d } = toVisit.shift();
     if (visited.has(id)) continue;
     visited.add(id);
     nodeIds.add(id);
 
-    // Follow all links (both directions)
-    for (const link of brain.links) {
-      if (link.source === id && !visited.has(link.target)) toVisit.push(link.target);
-      if (link.target === id && !visited.has(link.source)) toVisit.push(link.source);
+    if (d < depth) {
+      for (const link of brain.links) {
+        if (link.source === id && !visited.has(link.target)) toVisit.push({ id: link.target, d: d + 1 });
+        if (link.target === id && !visited.has(link.source)) toVisit.push({ id: link.source, d: d + 1 });
+      }
     }
   }
 
@@ -257,7 +258,7 @@ app.get('/api/health', (req, res) => {
 app.get('/api/brain', (req, res) => {
   try {
     const brain = readBrain();
-    const { tags, smart, search } = req.query;
+    const { tags, smart, search, depth } = req.query;
 
     let result = brain;
 
@@ -270,8 +271,9 @@ app.get('/api/brain', (req, res) => {
       result = filterBrainByTags(brain, tagList);
       logger.debug('Brain filter by tags', { tags: tagList, nodeCount: result.nodes.length });
     } else if (smart === 'true' || smart === '1') {
-      result = getSmartBrain(brain);
-      logger.debug('Brain smart mode', { nodeCount: result.nodes.length });
+      const depthNum = depth !== undefined ? parseInt(depth, 10) : Infinity;
+      result = getSmartBrain(brain, isNaN(depthNum) ? Infinity : depthNum);
+      logger.debug('Brain smart mode', { nodeCount: result.nodes.length, depth: depthNum });
     }
 
     res.json(result);
