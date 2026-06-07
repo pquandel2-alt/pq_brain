@@ -191,6 +191,53 @@ function validateTags(tags) {
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Selective loading helpers
+function filterBrainByTags(brain, tags) {
+  const tagSet = new Set(tags.map(t => t.toLowerCase()));
+  const nodes = brain.nodes.filter(n => {
+    const nodeTags = (n.tags || []).map(t => t.toLowerCase());
+    return nodeTags.some(t => tagSet.has(t));
+  });
+  const nodeIds = new Set(nodes.map(n => n.id));
+  const links = brain.links.filter(l => nodeIds.has(l.source) && nodeIds.has(l.target));
+  return { nodes, links };
+}
+
+function getSmartBrain(brain) {
+  // Smart mode: Start node + all reachable nodes (recursive)
+  const startNode = brain.nodes.find(n => n.label === 'Claude – Startpunkt' || n.label === 'Start');
+  if (!startNode) return brain; // fallback to full
+
+  const visited = new Set();
+  const toVisit = [startNode.id];
+  const nodeIds = new Set();
+
+  while (toVisit.length > 0) {
+    const id = toVisit.shift();
+    if (visited.has(id)) continue;
+    visited.add(id);
+    nodeIds.add(id);
+
+    // Follow all links (both directions)
+    for (const link of brain.links) {
+      if (link.source === id && !visited.has(link.target)) toVisit.push(link.target);
+      if (link.target === id && !visited.has(link.source)) toVisit.push(link.source);
+    }
+  }
+
+  const nodes = brain.nodes.filter(n => nodeIds.has(n.id));
+  const links = brain.links.filter(l => nodeIds.has(l.source) && nodeIds.has(l.target));
+  return { nodes, links };
+}
+
+function searchBrainByLabel(brain, query) {
+  const q = query.toLowerCase();
+  const nodes = brain.nodes.filter(n => n.label.toLowerCase().includes(q) || (n.content || '').toLowerCase().includes(q));
+  const nodeIds = new Set(nodes.map(n => n.id));
+  const links = brain.links.filter(l => nodeIds.has(l.source) && nodeIds.has(l.target));
+  return { nodes, links };
+}
+
 // Health check endpoint
 app.get('/api/health', (req, res) => {
   const brain = readBrain();
@@ -209,7 +256,25 @@ app.get('/api/health', (req, res) => {
 
 app.get('/api/brain', (req, res) => {
   try {
-    res.json(readBrain());
+    const brain = readBrain();
+    const { tags, smart, search } = req.query;
+
+    let result = brain;
+
+    // Priority: search > tags > smart > full
+    if (search) {
+      result = searchBrainByLabel(brain, search);
+      logger.debug('Brain search', { query: search, nodeCount: result.nodes.length });
+    } else if (tags) {
+      const tagList = tags.split(',').map(t => t.trim());
+      result = filterBrainByTags(brain, tagList);
+      logger.debug('Brain filter by tags', { tags: tagList, nodeCount: result.nodes.length });
+    } else if (smart === 'true' || smart === '1') {
+      result = getSmartBrain(brain);
+      logger.debug('Brain smart mode', { nodeCount: result.nodes.length });
+    }
+
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: 'Failed to read brain' });
   }
