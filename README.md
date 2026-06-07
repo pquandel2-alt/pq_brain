@@ -23,9 +23,16 @@ Read [`CLAUDE.md`](./CLAUDE.md) first — it explains the entire workflow. Also 
 
 **TL;DR:**
 
-1. **At conversation start:** `curl -s http://localhost:3000/api/brain`
-2. **Read all 7 nodes** (Start, User Profil, Feedback, Projekte, Ideen, Notizen, Referenzen)
-3. **Use their content as context**
+1. **At conversation start:** Load only the start node + direct neighbors (~77% fewer tokens)
+   ```bash
+   curl -s "http://localhost:3000/api/brain?smart=true&depth=1"
+   ```
+2. **Load project details on demand** using tags or search:
+   ```bash
+   curl -s "http://localhost:3000/api/brain?tags=homeassistant"
+   curl -s "http://localhost:3000/api/brain?search=thermostat"
+   ```
+3. **Use node content as context**
 4. **When something changes:** Update via `PUT /api/nodes/:id` or `POST /api/nodes`
 5. **Never re-derive** — if it's in a node, trust it
 
@@ -46,13 +53,24 @@ Read [`CLAUDE.md`](./CLAUDE.md) first — it explains the entire workflow. Also 
 
 | Method | Path | Body / Query | Description |
 |--------|------|-------------|-------------|
-| `GET` | `/api/brain` | — | Full graph `{ nodes, links }` |
+| `GET` | `/api/brain` | `?smart=true&depth=N` / `?tags=x,y` / `?search=q` | Filtered or full graph `{ nodes, links }` |
 | `POST` | `/api/nodes` | `{ label, type, content, tags }` | Create node |
 | `PUT` | `/api/nodes/:id` | partial node fields | Update node (merges) |
 | `DELETE` | `/api/nodes/:id` | — | Delete node + its links |
 | `POST` | `/api/links` | `{ source, target, label? }` | Link two nodes |
 | `DELETE` | `/api/links` | `{ source, target }` | Remove a link |
 | `POST` | `/api/import` | `{ dirPath }` | Import `.md` files with YAML frontmatter |
+
+### Query parameters for `GET /api/brain`
+
+| Parameter | Example | Description |
+|-----------|---------|-------------|
+| `smart=true` | `?smart=true` | Start node + all transitively reachable nodes |
+| `smart=true&depth=N` | `?smart=true&depth=1` | Start node + neighbors up to N hops (1 = direct neighbors only) |
+| `tags=x,y` | `?tags=homeassistant` | Only nodes matching any of the given tags |
+| `search=q` | `?search=thermostat` | Nodes whose label or content contains the query |
+
+**Recommended workflow:** Start with `depth=1` (~1.250 tokens), then load details with `?tags=<project>` as needed.
 
 ### Node shape
 
