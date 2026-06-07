@@ -13,23 +13,28 @@ That's it. No memory files. No wandering around looking for docs. Brain is the s
 
 ---
 
-## Step 1: Read the full graph
+## Step 1: Read the graph (token-efficient, two-stage)
 
+**Stage 1 — always at conversation start (direct neighbors only):**
 ```bash
-curl -s http://localhost:3000/api/brain
+curl -s "http://localhost:3000/api/brain?smart=true&depth=1"
+```
+Returns the `Claude – Startpunkt` node + its direct neighbors (~6 nodes, ~1.250 tokens).
+This gives you: who the user is, active projects list, coding preferences.
+
+**Stage 2 — load project details on demand:**
+```bash
+curl -s "http://localhost:3000/api/brain?tags=homeassistant"
+curl -s "http://localhost:3000/api/brain?search=thermostat"
+```
+Only fetch what you actually need for the current task.
+
+**Full graph (fallback):**
+```bash
+curl -s "http://localhost:3000/api/brain"
 ```
 
-Result is `{ "nodes": [...], "links": [...] }`. **Read every node's `content`.**
-
-You will find 5 standard nodes:
-- `Start` — entry point, links to everything else
-- `User Profil` — who is asking, their preferences, constraints
-- `Feedback` — what works, what to avoid, confirmed approaches
-- `Projekte` — active projects, goals, deadlines
-- `Ideen` — unvalidated ideas, future work
-- `Notizen` — technical patterns, architectural decisions
-
-Each node contains Markdown. Read them all.
+Result is always `{ "nodes": [...], "links": [...] }`. Read every node's `content` field — it is Markdown.
 
 ---
 
@@ -85,7 +90,11 @@ curl -X POST http://localhost:3000/api/links \
 ## API reference
 
 ```
-GET    /api/brain                      → { nodes, links }
+GET    /api/brain                      → full graph { nodes, links }
+GET    /api/brain?smart=true           → start node + all reachable (transitive)
+GET    /api/brain?smart=true&depth=N   → start node + neighbors up to N hops
+GET    /api/brain?tags=x,y            → nodes matching any tag
+GET    /api/brain?search=q            → nodes whose label/content contains q
 PUT    /api/nodes/:id                  → update (partial merge)
 POST   /api/nodes                      → create node
 DELETE /api/nodes/:id                  → delete node + links

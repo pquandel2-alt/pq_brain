@@ -39,15 +39,17 @@ Read [`CLAUDE.md`](./CLAUDE.md) first — it explains the entire workflow. Also 
    <img width="1905" height="882" alt="grafik" src="https://github.com/user-attachments/assets/791b946f-ebd0-4c33-ba2d-6b86d745840a" />
 
 
-## Standard 7 nodes included
+## Starter nodes (brain.example.json)
 
-- **Start** — Entry point explaining the system
-- **User Profil** — User facts, environment, experience, GitHub account
-- **Feedback** — What works, what to avoid, confirmed approaches
-- **Projekte** — Active projects, goals, versions, status
+The included example graph contains these starter nodes — adapt to your own projects:
+
+- **Claude – Startpunkt** — Entry point for AI agents, links to everything else
+- **User Profil** — User facts, environment, experience
+- **Coding-Präferenzen** — Preferences, confirmed approaches, what to avoid
+- **Projekte** — Hub linking all active project nodes
 - **Ideen** — Unvalidated ideas, future work
-- **Notizen** — Technical patterns, architecture decisions, how-tos
-- **Referenzen** — External pointers (APIs, tooling, GitHub repos)
+
+Add your own nodes freely — the graph grows with your projects.
 
 ## REST API
 
