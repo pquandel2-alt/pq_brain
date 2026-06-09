@@ -1,3 +1,6 @@
+
+   <img width="600" height="313" alt="gemini-svg" src="https://github.com/user-attachments/assets/9b7ea5e0-b677-48bb-bd60-03615d7baa15" />
+
 # pq_brain
 
 A lightweight persistent memory server for AI agents. Also a 3D knowledge graph you can explore in any browser.
