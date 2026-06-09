@@ -2,3 +2,7 @@ node_modules/
 brain.log
 brain.pid
 data/brain.json
+data/brain.db
+data/brain.db-wal
+data/brain.db-shm
+data/backups/

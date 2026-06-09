@@ -14,8 +14,11 @@ let selectedNode = null;
 let linkSourceNode = null;
 let filterType = 'all';
 let searchQuery = '';
+let semanticMatchIds = null; // Set von Treffer-IDs der semantischen Suche (Enter); null = Substring-Modus
 let activeTab = 'edit';
 let md = null;
+let startNodeId = null;                    // Startknoten: immer hell
+const recentlyAccessed = new Map();        // id → expiresAt (ms), 3s nach Zugriff
 
 /* ── Init ────────────────────────────────────────────── */
 async function init() {
@@ -28,7 +31,9 @@ async function init() {
 /* ── Data ────────────────────────────────────────────── */
 async function loadGraph() {
   const res = await fetch('/api/brain');
-  rawData = await res.json();
+  const data = await res.json();
+  startNodeId = data.startNodeId ?? null;
+  rawData = data;
 }
 
 function getGraphData() {
@@ -77,8 +82,15 @@ function handleResize() {
 }
 
 function nodeColor(node) {
+  // Startknoten leuchtet immer warm-weiß/golden
+  if (node.id === startNodeId) return '#fffde7';
+  // Kürzlich abgerufene Knoten leuchten hell-blau (3s)
+  if (recentlyAccessed.has(node.id)) return '#29b6f6';
+
   const base = node.color || NODE_COLORS[node.type] || '#888';
-  if (searchQuery) {
+  if (semanticMatchIds) {
+    if (!semanticMatchIds.has(node.id)) return DIM_COLOR;
+  } else if (searchQuery) {
     const match = node.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
                   (node.content || '').toLowerCase().includes(searchQuery.toLowerCase());
     if (!match) return DIM_COLOR;
@@ -91,6 +103,25 @@ function nodeColor(node) {
 function refreshGraph() {
   if (!graph) return;
   graph.nodeColor(nodeColor);
+}
+
+// Enter im Suchfeld: hybride semantische Suche (Server) → Treffer hervorheben + zum besten springen.
+async function semanticSearch(q) {
+  if (!q) { semanticMatchIds = null; refreshGraph(); return; }
+  try {
+    const res = await fetch('/api/brain?q=' + encodeURIComponent(q) + '&limit=15');
+    const data = await res.json();
+    semanticMatchIds = new Set((data.nodes || []).map(n => n.id));
+    refreshGraph();
+    if (data.nodes && data.nodes.length) {
+      showToast(`🔎 Semantisch: ${data.nodes.length} Treffer`);
+      jumpToNode(data.nodes[0].label);
+    } else {
+      showToast('Keine semantischen Treffer');
+    }
+  } catch {
+    showToast('Semantische Suche fehlgeschlagen');
+  }
 }
 
 function reloadGraph() {
@@ -363,12 +394,17 @@ function initUI() {
   const clearBtn = document.getElementById('search-clear');
   searchEl.addEventListener('input', () => {
     searchQuery = searchEl.value.trim();
+    semanticMatchIds = null; // Tippen → zurück zum Substring-Highlight
     clearBtn.classList.toggle('hidden', !searchQuery);
     refreshGraph();
+  });
+  searchEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); semanticSearch(searchEl.value.trim()); }
   });
   clearBtn.addEventListener('click', () => {
     searchEl.value = '';
     searchQuery = '';
+    semanticMatchIds = null;
     clearBtn.classList.add('hidden');
     refreshGraph();
   });
@@ -579,7 +615,19 @@ function initLiveSync() {
 
   ws.addEventListener('message', e => {
     const msg = JSON.parse(e.data);
+
+    // Access-Highlighting: Knoten aufleuchten lassen
+    if (msg.type === 'access') {
+      const exp = Date.now() + 3000;
+      msg.nodeIds.forEach(id => recentlyAccessed.set(id, exp));
+      if (graph) graph.nodeColor(nodeColor);
+      return;
+    }
+
     if (msg.type !== 'update') return;
+
+    // startNodeId aus Graph-Updates übernehmen
+    if (msg.data.startNodeId !== undefined) startNodeId = msg.data.startNodeId;
 
     const prev = JSON.stringify(rawData);
     const next = JSON.stringify(msg.data);
@@ -624,6 +672,17 @@ function initLiveSync() {
   ws.addEventListener('open', () => updateLiveStatus(true));
   ws.addEventListener('close', () => updateLiveStatus(false));
 }
+
+// Decay-Timer: abgelaufene Access-Highlights entfernen (alle 500ms)
+setInterval(() => {
+  if (!recentlyAccessed.size) return;
+  const now = Date.now();
+  let changed = false;
+  for (const [id, exp] of recentlyAccessed) {
+    if (now > exp) { recentlyAccessed.delete(id); changed = true; }
+  }
+  if (changed && graph) graph.nodeColor(nodeColor);
+}, 500);
 
 function flashNodes(ids) {
   if (!graph || ids.length === 0) return;

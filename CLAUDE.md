@@ -13,7 +13,14 @@ That's it. No memory files. No wandering around looking for docs. Brain is the s
 
 ---
 
-## Step 1: Read the graph (token-efficient, two-stage)
+## Step 1: Read the graph (token-efficient, staged)
+
+**Stage 0 — optional ultra-light orientation (whole graph, no content):**
+```bash
+curl -s "http://localhost:3000/api/brain?view=index"
+```
+Returns every node reduced to `id, label, type, tags` (no `content`) — ~70% smaller than the
+full graph (~150 tokens). Use it to see *what exists* before deciding what to load in full.
 
 **Stage 1 — always at conversation start (direct neighbors only):**
 ```bash
@@ -22,10 +29,23 @@ curl -s "http://localhost:3000/api/brain?smart=true&depth=1"
 Returns the `Claude – Startpunkt` node + its direct neighbors (~6 nodes, ~1.250 tokens).
 This gives you: who the user is, active projects list, coding preferences.
 
+**Recall — the token-cheapest way to answer a concrete question (PREFER THIS):**
+```bash
+curl -s "http://localhost:3000/api/recall?q=Wie+steuere+ich+die+Heizung&budget=2000"
+```
+Returns only the most relevant nodes as ranked **summaries** within a token budget
+(hybrid semantic + keyword). Then drill into a specific node for the full text:
+```bash
+curl -s "http://localhost:3000/api/nodes/<id>"
+```
+This beats dumping the graph — use it whenever you have an actual question.
+
 **Stage 2 — load project details on demand:**
 ```bash
 curl -s "http://localhost:3000/api/brain?tags=homeassistant"
-curl -s "http://localhost:3000/api/brain?search=thermostat"
+curl -s "http://localhost:3000/api/brain?semantic=Klimasteuerung"   # meaning-based
+curl -s "http://localhost:3000/api/brain?q=Heizung+Temperatur"      # hybrid (semantic+keyword)
+curl -s "http://localhost:3000/api/brain?search=thermostat"         # substring
 ```
 Only fetch what you actually need for the current task.
 
@@ -35,6 +55,10 @@ curl -s "http://localhost:3000/api/brain"
 ```
 
 Result is always `{ "nodes": [...], "links": [...] }`. Read every node's `content` field — it is Markdown.
+
+**Via MCP (native, any MCP client):** Brain is also an MCP server — use the tools
+`brain_recall`, `brain_search`, `brain_index`, `brain_get`, `brain_create_node`,
+`brain_update_node`, `brain_link`, `brain_history` instead of curl. Start with `brain_recall`.
 
 ---
 
@@ -90,17 +114,35 @@ curl -X POST http://localhost:3000/api/links \
 ## API reference
 
 ```
+GET    /api/recall?q=&budget=&limit=   → ranked summaries within a token budget (START HERE)
 GET    /api/brain                      → full graph { nodes, links }
-GET    /api/brain?smart=true           → start node + all reachable (transitive)
+GET    /api/brain?view=index           → whole graph, only id+label+type+tags (no content)
+GET    /api/brain?fields=id,label,...  → project nodes to chosen fields (combinable)
+GET    /api/brain?q=...                → hybrid search (semantic + keyword), ranked + score
+GET    /api/brain?semantic=...&limit=N → pure semantic (vector) search, ranked + score
 GET    /api/brain?smart=true&depth=N   → start node + neighbors up to N hops
 GET    /api/brain?tags=x,y            → nodes matching any tag
-GET    /api/brain?search=q            → nodes whose label/content contains q
-PUT    /api/nodes/:id                  → update (partial merge)
-POST   /api/nodes                      → create node
+GET    /api/brain?search=q            → substring match on label/content
+GET    /api/brain/health-report        → orphans, duplicate labels, dead wikilinks, never-accessed
+GET    /api/nodes/:id                  → one node, full (incl. summary + lifecycle), counts access
+GET    /api/nodes/:id/history          → version history
+POST   /api/nodes/:id/revert/:version  → revert to (or undelete) a past version
+POST   /api/nodes                      → create node (409 on duplicate label OR near-duplicate; ?force=true)
+PUT    /api/nodes/:id                  → update (partial merge; re-embeds + versions)
 DELETE /api/nodes/:id                  → delete node + links
-POST   /api/links                      → { source, target, label? }
+POST   /api/links                      → { source, target, label?, type? }   (type = typed edge)
 DELETE /api/links                      → { source, target }
+POST   /mcp                            → MCP (Streamable HTTP); also stdio via mcp/stdio.js
 ```
+
+**Optional fields on nodes:** `summary` (1–2 line preview used by recall — set it to save tokens),
+`source` (which agent/conversation wrote it). These + lifecycle fields appear only via
+`GET /api/nodes/:id`, never in the default graph output (keeps it lean).
+
+**Labels must be unique** — they are the wikilink anchor. `POST /api/nodes` returns `409`
+with the existing node if the label is taken, or if the content is a near-duplicate of an
+existing node (semantic dedup; pass `?force=true` to override). To disambiguate two real
+concepts that would share a name, give them distinct labels (e.g. `Brain` vs `Brain (GitHub)`).
 
 ---
 
