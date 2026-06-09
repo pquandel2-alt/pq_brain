@@ -1,3 +1,50 @@
+
+<img width="300" height="113" alt="gemini-svg" src="https://github.com/user-attachments/assets/9b7ea5e0-b677-48bb-bd60-03615d7baa15" />
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 300" width="100%" height="100%">
+  <!-- Hintergrund für den Kontrast (Dark Mode) -->
+  <rect width="100%" height="100%" fill="#0B0F19" rx="15"/>
+
+  <!-- ICON: Der smarte Graph-Fokus -->
+  <g transform="translate(30, 0)">
+    <!-- Äußeres hexagonales Schutzfeld (feine Linien) -->
+    <polygon points="150,50 236,100 236,200 150,250 64,200 64,100" fill="none" stroke="#1E293B" stroke-width="2"/>
+    
+    <!-- Graph-Verbindungen (Edges) -->
+    <line x1="64" y1="100" x2="150" y2="150" stroke="#334155" stroke-width="1.5" />
+    <line x1="236" y1="100" x2="150" y2="150" stroke="#334155" stroke-width="1.5" />
+    <line x1="150" y1="50" x2="150" y2="150" stroke="#334155" stroke-width="2" stroke-dasharray="4"/>
+    <line x1="64" y1="200" x2="150" y2="150" stroke="#00F5D4" stroke-width="1.5" stroke-opacity="0.5"/>
+    <line x1="236" y1="200" x2="150" y2="150" stroke="#00F5D4" stroke-width="1.5" stroke-opacity="0.5"/>
+    <line x1="150" y1="250" x2="150" y2="150" stroke="#00F5D4" stroke-width="2" stroke-opacity="0.7"/>
+
+    <!-- Inaktive Rand-Knoten (Nodes) -->
+    <circle cx="64" cy="100" r="5" fill="#475569" />
+    <circle cx="236" cy="100" r="5" fill="#475569" />
+    <circle cx="150" cy="50" r="6" fill="#64748B" />
+    
+    <!-- Aktive, semantische Knoten (BGE-M3 Treffer) -->
+    <circle cx="64" cy="200" r="6" fill="#00F5D4" />
+    <circle cx="236" cy="200" r="6" fill="#00F5D4" />
+    <circle cx="150" cy="250" r="7" fill="#00F5D4" />
+
+    <!-- Der zentrale Fokus-Kern (/api/recall Leuchten) -->
+    <circle cx="150" cy="150" r="16" fill="#00F5D4" opacity="0.15"/>
+    <circle cx="150" cy="150" r="10" fill="#00F5D4" opacity="0.4"/>
+    <circle cx="150" cy="150" r="5" fill="#FFFFFF" />
+  </g>
+
+  <!-- TYPOGRAFIE: Clean & Enterprise-Ready -->
+  <g font-family="system-ui, -apple-system, sans-serif" transform="translate(300, 165)">
+    <!-- "pq_" - dünner, technischer Prefix -->
+    <text x="0" y="0" font-size="54" font-weight="200" fill="#94A3B8" letter-spacing="2">pq_</text>
+    <!-- "brain" - markant, stark, zentriert -->
+    <text x="85" y="0" font-size="54" font-weight="800" fill="#F8FAFC" letter-spacing="1">brain</text>
+    <!-- Untertitel / Slogan -->
+    <text x="5" y="35" font-size="14" font-weight="500" fill="#00F5D4" letter-spacing="6" opacity="0.9">HYBRID KNOWLEDGE LAYER</text>
+  </g>
+</svg>
+
 # pq_brain
 
 A lightweight persistent memory server for AI agents. Also a 3D knowledge graph you can explore in any browser.
