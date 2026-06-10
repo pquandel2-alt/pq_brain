@@ -19,6 +19,7 @@ let activeTab = 'edit';
 let md = null;
 let startNodeId = null;                    // Startknoten: immer hell
 const recentlyAccessed = new Map();        // id → expiresAt (ms), 3s nach Zugriff
+const glowOverlays = new Map();            // id → HTMLElement (CSS-Glow-Overlay)
 
 /* ── Init ────────────────────────────────────────────── */
 async function init() {
@@ -26,6 +27,7 @@ async function init() {
   await loadGraph();
   initGraph();
   initUI();
+  requestAnimationFrame(animateGlow);
 }
 
 /* ── Data ────────────────────────────────────────────── */
@@ -52,6 +54,7 @@ function initGraph() {
     .nodeId('id')
     .nodeLabel(() => '')          // We use custom hover
     .nodeColor(nodeColor)
+    .nodeVal(n => n.id === startNodeId ? 6 : 1)
     .nodeOpacity(0.92)
     .nodeRelSize(5)
     .linkColor(() => 'rgba(100,150,255,0.35)')
@@ -84,8 +87,8 @@ function handleResize() {
 function nodeColor(node) {
   // Startknoten leuchtet immer warm-weiß/golden
   if (node.id === startNodeId) return '#fffde7';
-  // Kürzlich abgerufene Knoten leuchten hell-blau (3s)
-  if (recentlyAccessed.has(node.id)) return '#29b6f6';
+  // Kürzlich abgerufene Knoten leuchten weiß (3s)
+  if (recentlyAccessed.has(node.id)) return '#ffffff';
 
   const base = node.color || NODE_COLORS[node.type] || '#888';
   if (semanticMatchIds) {
@@ -510,6 +513,17 @@ function initUI() {
 
   // Mobile bottom sheet drag-to-dismiss
   initPanelDrag();
+
+  // Action log toggle
+  const logHeader = document.getElementById('log-header');
+  if (logHeader) {
+    logHeader.addEventListener('click', () => {
+      const logEl = document.getElementById('action-log');
+      const toggleBtn = document.getElementById('log-toggle');
+      const collapsed = logEl.classList.toggle('collapsed');
+      if (toggleBtn) toggleBtn.textContent = collapsed ? '▲' : '▼';
+    });
+  }
 }
 
 function closeCreateModal() {
@@ -624,6 +638,11 @@ function initLiveSync() {
       return;
     }
 
+    if (msg.type === 'log') {
+      appendLogEntry(msg);
+      return;
+    }
+
     if (msg.type !== 'update') return;
 
     // startNodeId aus Graph-Updates übernehmen
@@ -721,6 +740,99 @@ function showLiveIndicator() {
   el.style.opacity = '1';
   clearTimeout(liveTimer);
   liveTimer = setTimeout(() => { el.style.opacity = '0'; }, 2000);
+}
+
+/* ── Glow Overlays ───────────────────────────────────── */
+function animateGlow() {
+  if (graph) {
+    const container = document.getElementById('graph-container');
+    const rect = container.getBoundingClientRect();
+    const now = Date.now();
+    const glowNodes = rawData.nodes.filter(n =>
+      n.id === startNodeId || recentlyAccessed.has(n.id)
+    );
+    const glowIds = new Set(glowNodes.map(n => n.id));
+
+    for (const [id, el] of glowOverlays) {
+      if (!glowIds.has(id)) { el.remove(); glowOverlays.delete(id); }
+    }
+
+    for (const node of glowNodes) {
+      const simNode = graph.graphData().nodes.find(n => n.id === node.id);
+      if (!simNode || simNode.x == null) continue;
+
+      const coords = graph.graph2ScreenCoords(simNode.x, simNode.y, simNode.z ?? 0);
+      if (!coords) continue;
+      const sx = rect.left + coords.x;
+      const sy = rect.top + coords.y;
+
+      let el = glowOverlays.get(node.id);
+      if (!el) {
+        el = document.createElement('div');
+        el.style.position = 'fixed';
+        el.style.pointerEvents = 'none';
+        el.style.borderRadius = '50%';
+        el.style.zIndex = '3';
+        document.body.appendChild(el);
+        glowOverlays.set(node.id, el);
+      }
+
+      const isStart = node.id === startNodeId;
+      const size = isStart ? 55 : 45;
+      let opacity, color;
+
+      if (isStart) {
+        const phase = (Math.sin(now / 900) + 1) / 2;
+        opacity = 0.2 + phase * 0.3;
+        color = '255, 248, 180';
+      } else {
+        const remaining = recentlyAccessed.get(node.id) - now;
+        opacity = Math.max(0, (remaining / 3000) * 0.65);
+        color = '255, 255, 255';
+      }
+
+      const outOfBounds = sx < -60 || sx > window.innerWidth + 60 ||
+                          sy < -60 || sy > window.innerHeight + 60;
+      el.style.opacity = outOfBounds ? '0' : '1';
+      el.style.width = `${size}px`;
+      el.style.height = `${size}px`;
+      el.style.left = `${sx - size / 2}px`;
+      el.style.top = `${sy - size / 2}px`;
+      el.style.background = `rgba(${color}, ${opacity})`;
+      el.style.filter = `blur(${Math.round(size * 0.55)}px)`;
+    }
+  }
+  requestAnimationFrame(animateGlow);
+}
+
+/* ── Action Log ──────────────────────────────────────── */
+function appendLogEntry({ action, labels, ts }) {
+  const logEntries = document.getElementById('log-entries');
+  if (!logEntries) return;
+
+  const el = document.createElement('div');
+  el.className = 'log-entry';
+  const time = new Date(ts).toLocaleTimeString('de-DE', {
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+  const icons = { read: '👁', created: '✨', updated: '✏️', deleted: '🗑', linked: '🔗', unlinked: '✂️' };
+  const icon = icons[action] ?? '·';
+  const labelText = labels && labels.length ? labels.join(' → ') : action;
+  el.textContent = `${time} ${icon} ${labelText}`;
+
+  logEntries.prepend(el);
+  while (logEntries.children.length > 50) logEntries.lastChild.remove();
+
+  // Auto-expand the log when new entries arrive
+  const logEl = document.getElementById('action-log');
+  if (logEl && logEl.classList.contains('collapsed')) {
+    // Keep collapsed but show a brief flash on the header
+    const header = document.getElementById('log-header');
+    if (header) {
+      header.style.color = 'rgba(255,255,255,0.85)';
+      setTimeout(() => { header.style.color = ''; }, 800);
+    }
+  }
 }
 
 /* ── Start ───────────────────────────────────────────── */

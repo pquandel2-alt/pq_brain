@@ -162,6 +162,17 @@ function broadcastAccess(nodeIds) {
   }
 }
 
+function broadcastLog(action, labels = []) {
+  const msg = JSON.stringify({ type: 'log', action, labels, ts: new Date().toISOString() });
+  for (const client of wss.clients) {
+    try { if (client.readyState === 1) client.send(msg); } catch { /* ignore */ }
+  }
+}
+
+function getNodeLabel(id) {
+  try { return db.getNodeFull(id)?.label ?? String(id); } catch { return String(id); }
+}
+
 // ── Validation helpers ──────────────────────────────────────────────────
 function validateType(type) {
   return ALLOWED_TYPES.includes(type) ? type : 'note';
@@ -284,6 +295,7 @@ app.get('/api/brain', async (req, res) => {
       setImmediate(() => {
         try { db.touchAccess(trackIds); } catch {}
         broadcastAccess(trackIds);
+        broadcastLog('read', trackIds.slice(0, 3).map(id => getNodeLabel(id)));
       });
     }
   } catch (err) {
@@ -306,6 +318,7 @@ app.get('/api/recall', async (req, res) => {
       setImmediate(() => {
         try { db.touchAccess(ids); } catch {}
         broadcastAccess(ids);
+        broadcastLog('read', out.results.slice(0, 3).map(r => r.label || getNodeLabel(r.id)));
       });
     }
   } catch (err) {
@@ -347,6 +360,7 @@ app.post('/api/nodes', async (req, res) => {
       });
     }
     afterWrite();
+    broadcastLog('created', [label]);
     logger.info('Node created', { label, id: r.node.id });
     res.json(r.node);
   } catch (err) {
@@ -372,6 +386,7 @@ app.put('/api/nodes/:id', async (req, res) => {
     if (r.error === 'not_found') return res.status(404).json({ error: 'Node not found' });
 
     afterWrite();
+    broadcastLog('updated', [r.node.label]);
     logger.info('Node updated', { id, fields: Object.keys(updates) });
     res.json(r.node);
   } catch (err) {
@@ -387,6 +402,7 @@ app.delete('/api/nodes/:id', (req, res) => {
     if (!result) return res.status(404).json({ error: 'Node not found' });
 
     afterWrite();
+    broadcastLog('deleted', [result.label]);
     logger.info('Node deleted', { id: req.params.id, label: result.label });
     res.json({ ok: true });
   } catch (err) {
@@ -405,6 +421,7 @@ app.get('/api/nodes/:id', (req, res) => {
     setImmediate(() => {
       try { db.touchAccess([nid]); } catch {}
       broadcastAccess([nid]);
+      broadcastLog('read', [node.label]);
     });
     res.json(node);
   } catch (err) {
@@ -451,6 +468,7 @@ app.post('/api/links', (req, res) => {
 
     if (result.created) {
       afterWrite();
+      broadcastLog('linked', [getNodeLabel(source), getNodeLabel(target)]);
       logger.info('Link created', { source, target, type: relType || undefined });
     }
     res.json(relType ? { source, target, label, rel_type: relType } : { source, target, label });
@@ -469,6 +487,7 @@ app.delete('/api/links', (req, res) => {
     const result = db.deleteLink(source, target);
     if (result.deleted) {
       afterWrite();
+      broadcastLog('unlinked', [getNodeLabel(source), getNodeLabel(target)]);
       logger.info('Link deleted', { source, target });
     }
     res.json({ ok: true });
@@ -621,7 +640,7 @@ function mcpAuth(req, res, next) {
 
 app.post('/mcp', mcpAuth, async (req, res) => {
   try {
-    const mcp = buildMcpServer({ onWrite: afterWrite });
+    const mcp = buildMcpServer({ onWrite: afterWrite, onAccess: broadcastAccess, onLog: broadcastLog });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on('close', () => { transport.close(); mcp.close(); });
     await mcp.connect(transport);

@@ -9,6 +9,65 @@
   <title>Brain</title>
   <link rel="manifest" href="/manifest.json">
   <link rel="stylesheet" href="/style.css">
+  <style>
+    #action-log {
+      position: fixed;
+      bottom: 12px;
+      right: 12px;
+      width: 290px;
+      background: rgba(10, 10, 18, 0.93);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 10px;
+      z-index: 150;
+      overflow: hidden;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    }
+    #log-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 7px 12px;
+      font-size: 11px;
+      font-family: inherit;
+      color: rgba(255,255,255,0.45);
+      cursor: pointer;
+      user-select: none;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      transition: color 0.3s;
+    }
+    #log-header:hover { color: rgba(255,255,255,0.7); }
+    #action-log.collapsed #log-header { border-bottom: none; }
+    #log-toggle {
+      background: none;
+      border: none;
+      color: inherit;
+      font-size: 9px;
+      cursor: pointer;
+      padding: 0;
+      line-height: 1;
+    }
+    #log-entries {
+      max-height: 190px;
+      overflow-y: auto;
+      padding: 2px 0;
+    }
+    #action-log.collapsed #log-entries { display: none; }
+    .log-entry {
+      padding: 4px 12px;
+      font-size: 11px;
+      font-family: inherit;
+      color: rgba(255,255,255,0.55);
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: 1.5;
+    }
+    .log-entry:last-child { border-bottom: none; }
+    #log-entries::-webkit-scrollbar { width: 3px; }
+    #log-entries::-webkit-scrollbar-track { background: transparent; }
+    #log-entries::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
+  </style>
 </head>
 <body>
 
@@ -145,6 +204,15 @@
 
   <!-- Toast -->
   <div id="toast"></div>
+
+  <!-- Action Log -->
+  <div id="action-log" class="collapsed">
+    <div id="log-header">
+      <span>Aktivitäten</span>
+      <button id="log-toggle">&#9650;</button>
+    </div>
+    <div id="log-entries"></div>
+  </div>
 
   <script src="//unpkg.com/3d-force-graph@1.73.0/dist/3d-force-graph.min.js"></script>
   <script src="//unpkg.com/markdown-it@13.0.2/dist/markdown-it.min.js"></script>

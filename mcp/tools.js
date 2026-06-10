@@ -4,9 +4,11 @@
  * Brain als MCP-Server: dieselben Fähigkeiten wie REST, als native Tools für
  * jede MCP-fähige KI. Wrappt db/retrieval/operations (eine Quelle).
  *
- * buildServer({ onWrite }) → McpServer
+ * buildServer({ onWrite, onAccess, onLog }) → McpServer
  *   onWrite() wird nach jeder Mutation aufgerufen (in-process: broadcast+backup;
  *   stdio: no-op).
+ *   onAccess(nodeIds) nach Lesezugriffen (in-process: GUI-Glow; stdio: no-op).
+ *   onLog(action, labels) für das GUI-Action-Log (stdio: no-op).
  */
 
 const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
@@ -20,7 +22,7 @@ const TYPES = ['memory', 'note', 'idea', 'project', 'reference'];
 const json = (obj) => ({ content: [{ type: 'text', text: JSON.stringify(obj, null, 2) }] });
 const fail = (msg) => ({ content: [{ type: 'text', text: msg }], isError: true });
 
-function buildServer({ onWrite = () => {} } = {}) {
+function buildServer({ onWrite = () => {}, onAccess = () => {}, onLog = () => {} } = {}) {
   const server = new McpServer({ name: 'brain', version: '1.0.0' });
 
   // ── Lesen ───────────────────────────────────────────────────────────
@@ -30,7 +32,11 @@ function buildServer({ onWrite = () => {} } = {}) {
     inputSchema: { q: z.string().describe('Frage/Stichworte'), budget: z.number().int().optional().describe('Token-Budget (Default 4000)'), limit: z.number().int().optional().describe('max. Treffer (Default 8)'), rerank: z.boolean().optional().describe('Cross-Encoder Re-Ranking (Opt-in, Default false; hilft erst bei vielen ähnlichen Knoten)') },
   }, async ({ q, budget, limit, rerank }) => {
     const out = await retrieval.recall({ q, budget, limit, rerank: rerank === true });
-    if (out.results.length) try { db.touchAccess(out.results.map(r => r.id)); } catch {}
+    if (out.results.length) {
+      try { db.touchAccess(out.results.map(r => r.id)); } catch {}
+      onAccess(out.results.map(r => r.id));
+      onLog('read', out.results.slice(0, 3).map(r => r.label));
+    }
     return json(out);
   });
 
@@ -40,7 +46,11 @@ function buildServer({ onWrite = () => {} } = {}) {
     inputSchema: { query: z.string(), mode: z.enum(['hybrid', 'semantic', 'keyword']).optional(), limit: z.number().int().optional() },
   }, async ({ query, mode, limit }) => {
     const results = await retrieval.searchCompact({ q: query, mode, limit });
-    if (results.length) try { db.touchAccess(results.map(r => r.id)); } catch {}
+    if (results.length) {
+      try { db.touchAccess(results.map(r => r.id)); } catch {}
+      onAccess(results.map(r => r.id));
+      onLog('read', results.slice(0, 3).map(r => r.label));
+    }
     return json({ query, mode: mode || 'hybrid', count: results.length, results });
   });
 
@@ -61,6 +71,8 @@ function buildServer({ onWrite = () => {} } = {}) {
     const node = db.getNodeFull(id);
     if (!node) return fail('Node not found: ' + id);
     try { db.touchAccess([id]); } catch {}
+    onAccess([id]);
+    onLog('read', [node.label]);
     return json(node);
   });
 
@@ -86,6 +98,7 @@ function buildServer({ onWrite = () => {} } = {}) {
     if (r.error === 'label_exists') return fail('Label existiert bereits: ' + JSON.stringify(r.existing));
     if (r.error === 'similar_exists') return fail(`Ähnlicher Knoten existiert (Similarity ${r.similarity}): ${JSON.stringify(r.similar)} — force=true zum Anlegen.`);
     onWrite();
+    onLog('created', [r.node.label]);
     return json(r.node);
   });
 
@@ -102,6 +115,7 @@ function buildServer({ onWrite = () => {} } = {}) {
     const r = await operations.updateNode(id, updates);
     if (r.error === 'not_found') return fail('Node not found: ' + id);
     onWrite();
+    onLog('updated', [r.node.label]);
     return json(r.node);
   });
 
@@ -114,7 +128,10 @@ function buildServer({ onWrite = () => {} } = {}) {
     const r = db.createLink(source, target, label || '', type || null);
     if (r.error === 'source') return fail('Source node not found');
     if (r.error === 'target') return fail('Target node not found');
-    if (r.created) onWrite();
+    if (r.created) {
+      onWrite();
+      onLog('linked', [source, target].map(id => { try { return db.getNodeFull(id)?.label ?? id; } catch { return id; } }));
+    }
     return json({ source, target, type: type || null, created: r.created });
   });
 
