@@ -1,3 +1,4 @@
+const config = require('./config'); // zuerst: lädt .env, leitet Pfade/Version ab
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
@@ -11,16 +12,21 @@ const operations = require('./operations');
 const gardener = require('./gardener');
 
 const app = express();
-const BACKUP_DIR = path.join(__dirname, 'data', 'backups');
-const LOG_FILE = path.join(__dirname, 'logs', 'brain.log');
+const BACKUP_DIR = config.BACKUP_DIR;   // alle Pfade aus BRAIN_DATA_DIR (eine Quelle)
+const LOG_FILE = config.LOG_FILE;
 const ALLOWED_TYPES = ['memory', 'note', 'idea', 'project', 'reference'];
 const MAX_BACKUPS = 72;                          // ~3 Tage bei stündlichem Takt
 const BACKUP_MIN_INTERVAL_MS = 60 * 60 * 1000;   // max. 1 Backup pro Stunde
 
-// Ensure directories exist
-[BACKUP_DIR, path.dirname(LOG_FILE)].forEach(dir => {
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-});
+// Verzeichnisse legt config.js bereits an (DATA_DIR/backups, /logs, /models).
+
+// ── Einheitliches Fehlerformat ──────────────────────────────────────────
+// Rückwärtskompatibel: { error } bleibt; zusätzlich ein stabiles `code` pro
+// Fehlerklasse, damit generische Clients zuverlässig darauf verzweigen können.
+const ERROR_CODES = { 400: 'BAD_REQUEST', 401: 'UNAUTHORIZED', 403: 'FORBIDDEN', 404: 'NOT_FOUND', 409: 'CONFLICT', 500: 'INTERNAL_ERROR' };
+function sendError(res, status, message, { code, ...extra } = {}) {
+  return res.status(status).json({ error: message, code: code || ERROR_CODES[status] || 'ERROR', ...extra });
+}
 
 // Logger — persistenter Append-Stream statt synchronem appendFileSync pro Zeile.
 const logStream = fs.createWriteStream(LOG_FILE, { flags: 'a' });
@@ -262,13 +268,13 @@ app.get('/api/health', (req, res) => {
     linkCount: graph.links.length,
     storage: 'sqlite',
     vectors: db.vecEnabled,
-    version: '2.0.0',
+    version: config.VERSION,
   });
 });
 
 app.get('/api/brain', async (req, res) => {
   try {
-    const { tags, smart, search, depth, fields, view, q, semantic, limit } = req.query;
+    const { tags, smart, search, depth, fields, view, q, semantic, limit, offset } = req.query;
 
     let result;
 
@@ -306,9 +312,29 @@ app.get('/api/brain', async (req, res) => {
       logger.debug('Brain projection', { fields: projection, nodeCount: result.nodes.length });
     }
 
-    // startNodeId für GUI-Glow (immer mitliefern, token-lean: nur die ID)
-    const startNode = result.nodes?.find?.(n => n.label === 'Claude – Startpunkt' || n.label === 'Start');
-    res.json({ ...result, startNodeId: startNode?.id ?? null });
+    // Pagination — nur in Listing-Modi (q/semantic sind bereits über `limit` gerankt-begrenzt).
+    // Default-Limit schützt große Graphen vor versehentlichen Voll-Dumps; `limit=0`
+    // hebt es explizit auf ("alles"). Antwort trägt immer ein pagination-Objekt.
+    let pagination = null;
+    if (!q && !semantic) {
+      const DEFAULT_LIST_LIMIT = 1000;
+      const total = result.nodes.length;
+      const lim = limit !== undefined ? Math.max(0, parseInt(limit, 10) || 0) : DEFAULT_LIST_LIMIT;
+      const off = offset !== undefined ? Math.max(0, parseInt(offset, 10) || 0) : 0;
+      if (lim > 0 || off > 0) {
+        const sliced = lim > 0 ? result.nodes.slice(off, off + lim) : result.nodes.slice(off);
+        const hasId = sliced.length === 0 || 'id' in sliced[0];
+        const keep = new Set(sliced.map(n => n.id));
+        result = {
+          nodes: sliced,
+          links: hasId ? result.links.filter(l => keep.has(l.source) && keep.has(l.target)) : result.links,
+        };
+      }
+      pagination = { total, returned: result.nodes.length, limit: lim, offset: off };
+    }
+
+    // startNodeId (deterministisch via db.getStartNodeId) für GUI-Glow / Agenten-Einstieg.
+    res.json({ ...result, startNodeId: db.getStartNodeId(), ...(pagination ? { pagination } : {}) });
 
     // Zugriffs-Tracking asynchron, blockiert die Antwort nicht.
     if (trackIds && trackIds.length) {
@@ -328,11 +354,11 @@ app.get('/api/brain', async (req, res) => {
 app.get('/api/recall', async (req, res) => {
   try {
     const query = req.query.q;
-    if (!query) return res.status(400).json({ error: 'q required' });
+    if (!query) return sendError(res, 400, 'q required', { code: 'VALIDATION_ERROR' });
 
     const doRerank = req.query.rerank === 'true'; // Opt-in (Default aus)
     const doExpand = req.query.expand === 'true'; // A4: Graph-Expansion Opt-in
-    const out = await retrieval.recall({ q: query, budget: req.query.budget, limit: req.query.limit, rerank: doRerank, expand: doExpand });
+    const out = await retrieval.recall({ q: query, budget: req.query.budget, limit: req.query.limit, rerank: doRerank, expand: doExpand, charsPerToken: req.query.charsPerToken });
     res.json(out);
     if (out.results.length) {
       const ids = out.results.map(r => r.id);
@@ -345,6 +371,52 @@ app.get('/api/recall', async (req, res) => {
   } catch (err) {
     logger.error('Recall failed', { error: err.message });
     res.status(500).json({ error: 'Failed to recall' });
+  }
+});
+
+// Session-Briefing: generischer Einstiegskontext für JEDE KI (REST-Parität zu
+// brain_briefing). format=md (Default) liefert fertiges Markdown, format=json die
+// strukturierten Daten. Gleiche Quelle wie das MCP-Tool → identischer Startkontext.
+app.get('/api/briefing', (req, res) => {
+  try {
+    const b = retrieval.buildBriefing({ budget: req.query.budget, charsPerToken: req.query.charsPerToken });
+    if (b.start) {
+      const sid = b.start.id;
+      setImmediate(() => { try { db.touchAccess([sid]); } catch {} broadcastAccess([sid]); });
+    }
+    if ((req.query.format || 'md') === 'json') return res.json(b);
+    res.type('text/markdown').send(retrieval.briefingMarkdown(b));
+  } catch (err) {
+    logger.error('Briefing failed', { error: err.message });
+    sendError(res, 500, 'Failed to build briefing');
+  }
+});
+
+// Tool-Katalog für generische Agenten — dieselbe Quelle wie die MCP-Registrierung.
+// format=openai → OpenAI-Function-Calling; sonst JSON-Schema je Tool.
+const { listToolSchemas } = require('./mcp/tools');
+app.get('/api/tools', (req, res) => {
+  try {
+    const format = req.query.format === 'openai' ? 'openai' : undefined;
+    const tools = listToolSchemas({ format });
+    res.json({ count: tools.length, format: format || 'jsonschema', tools });
+  } catch (err) {
+    logger.error('Tool list failed', { error: err.message });
+    sendError(res, 500, 'Failed to list tools');
+  }
+});
+
+// OpenAPI-Spec live ausliefern (JSON kanonisch; YAML für ChatGPT-Actions/Menschen).
+// Version stammt aus config → kein Drift gegen package.json.
+const openapiSpec = require('./openapi');
+app.get('/openapi.json', (req, res) => res.json(openapiSpec));
+app.get(['/openapi.yaml', '/openapi.yml'], (req, res) => {
+  try {
+    const yaml = require('js-yaml');
+    res.type('text/yaml').send(yaml.dump(openapiSpec));
+  } catch {
+    // js-yaml optional — JSON ist für Importer ebenso gültig.
+    res.type('application/json').send(JSON.stringify(openapiSpec, null, 2));
   }
 });
 
@@ -417,11 +489,11 @@ app.post('/api/nodes', async (req, res) => {
       label, type, content, tags, summary: summary ?? null, source: source ?? null, ttl: ttl ?? null, force,
     });
     if (r.error === 'label_exists') {
-      return res.status(409).json({ error: 'Label already exists', existing: r.existing });
+      return sendError(res, 409, 'Label already exists', { code: 'LABEL_EXISTS', existing: r.existing });
     }
     if (r.error === 'similar_exists') {
-      return res.status(409).json({
-        error: 'Similar node exists', similarity: r.similarity, similar: r.similar,
+      return sendError(res, 409, 'Similar node exists', {
+        code: 'SIMILAR_EXISTS', similarity: r.similarity, similar: r.similar,
         hint: 'POST mit ?force=true zum Anlegen trotzdem',
       });
     }
@@ -432,7 +504,7 @@ app.post('/api/nodes', async (req, res) => {
   } catch (err) {
     health.errorCount++;
     health.lastError = err.message;
-    res.status(400).json({ error: err.message });
+    sendError(res, 400, err.message, { code: 'VALIDATION_ERROR' });
   }
 });
 
@@ -449,7 +521,7 @@ app.put('/api/nodes/:id', async (req, res) => {
     if ('ttl' in req.body) updates.ttl = req.body.ttl === null ? null : validateTtl(req.body.ttl);
 
     const r = await operations.updateNode(id, updates);
-    if (r.error === 'not_found') return res.status(404).json({ error: 'Node not found' });
+    if (r.error === 'not_found') return sendError(res, 404, 'Node not found', { code: 'NOT_FOUND' });
 
     afterWrite();
     broadcastLog('updated', [r.node.label]);
@@ -458,14 +530,14 @@ app.put('/api/nodes/:id', async (req, res) => {
   } catch (err) {
     health.errorCount++;
     health.lastError = err.message;
-    res.status(400).json({ error: err.message });
+    sendError(res, 400, err.message, { code: 'VALIDATION_ERROR' });
   }
 });
 
 app.delete('/api/nodes/:id', (req, res) => {
   try {
     const result = db.deleteNode(req.params.id);
-    if (!result) return res.status(404).json({ error: 'Node not found' });
+    if (!result) return sendError(res, 404, 'Node not found', { code: 'NOT_FOUND' });
 
     afterWrite();
     broadcastLog('deleted', [result.label]);
@@ -482,7 +554,7 @@ app.delete('/api/nodes/:id', (req, res) => {
 app.get('/api/nodes/:id', (req, res) => {
   try {
     const node = db.getNodeFull(req.params.id);
-    if (!node) return res.status(404).json({ error: 'Node not found' });
+    if (!node) return sendError(res, 404, 'Node not found', { code: 'NOT_FOUND' });
     const nid = req.params.id;
     setImmediate(() => {
       try { db.touchAccess([nid]); } catch {}
@@ -512,10 +584,10 @@ app.get('/api/nodes/:id/neighbors', (req, res) => {
       depth: req.query.depth,
       direction: req.query.direction,
     });
-    if (!out) return res.status(404).json({ error: 'Node not found' });
+    if (!out) return sendError(res, 404, 'Node not found', { code: 'NOT_FOUND' });
     res.json(out);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to read neighbors' });
+    sendError(res, 500, 'Failed to read neighbors');
   }
 });
 
@@ -524,9 +596,9 @@ app.get('/api/nodes/:id/neighbors', (req, res) => {
 app.post('/api/nodes/:id/revert/:version', async (req, res) => {
   try {
     const version = parseInt(req.params.version, 10);
-    if (isNaN(version)) return res.status(400).json({ error: 'Invalid version' });
+    if (isNaN(version)) return sendError(res, 400, 'Invalid version', { code: 'VALIDATION_ERROR' });
     const r = await operations.revertNode(req.params.id, version);
-    if (r.error === 'not_found') return res.status(404).json({ error: 'Version not found' });
+    if (r.error === 'not_found') return sendError(res, 404, 'Version not found', { code: 'NOT_FOUND' });
     afterWrite();
     logger.info('Node reverted', { id: req.params.id, toVersion: version });
     res.json(r.node);
@@ -540,13 +612,13 @@ app.post('/api/nodes/:id/revert/:version', async (req, res) => {
 app.post('/api/links', (req, res) => {
   try {
     const { source, target, label = '', type = null } = req.body;
-    if (!source || !target) return res.status(400).json({ error: 'source and target required' });
-    if (source === target) return res.status(400).json({ error: 'Cannot link node to itself' });
+    if (!source || !target) return sendError(res, 400, 'source and target required', { code: 'VALIDATION_ERROR' });
+    if (source === target) return sendError(res, 400, 'Cannot link node to itself', { code: 'VALIDATION_ERROR' });
 
     const relType = type ? String(type).trim() || null : null;
     const result = db.createLink(source, target, label, relType);
-    if (result.error === 'source') return res.status(404).json({ error: 'Source node not found' });
-    if (result.error === 'target') return res.status(404).json({ error: 'Target node not found' });
+    if (result.error === 'source') return sendError(res, 404, 'Source node not found', { code: 'NOT_FOUND' });
+    if (result.error === 'target') return sendError(res, 404, 'Target node not found', { code: 'NOT_FOUND' });
 
     if (result.created) {
       afterWrite();
@@ -752,15 +824,14 @@ const mcpMethodNotAllowed = (req, res) =>
 app.get('/mcp', mcpAuth, mcpMethodNotAllowed);
 app.delete('/mcp', mcpAuth, mcpMethodNotAllowed);
 
-const PORT = process.env.PORT || 3000;
+const PORT = config.PORT;
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 wss.on('connection', ws => {
   try {
     const graph = db.getBrain();
-    const startNode = graph.nodes.find(n => n.label === 'Claude – Startpunkt' || n.label === 'Start');
-    ws.send(JSON.stringify({ type: 'update', data: { ...graph, startNodeId: startNode?.id ?? null } }));
+    ws.send(JSON.stringify({ type: 'update', data: { ...graph, startNodeId: db.getStartNodeId() } }));
     try {
       const entries = db.getRecentLog(7);
       ws.send(JSON.stringify({ type: 'log-history', entries }));
@@ -783,8 +854,7 @@ setInterval(() => {
       logger.info('Ephemeral nodes expired', { count: n });
       backupDirty = true; // gelöschte Knoten sollen ins nächste Snapshot
       const graph = db.getBrain();
-      const startNode = graph.nodes.find(nd => nd.label === 'Claude – Startpunkt' || nd.label === 'Start');
-      broadcast({ ...graph, startNodeId: startNode?.id ?? null });
+      broadcast({ ...graph, startNodeId: db.getStartNodeId() });
     }
   } catch (err) {
     logger.error('Ephemeral cleanup failed', { error: err.message });

@@ -13,17 +13,14 @@
  * über gezielte Endpunkte (Phase 2/3).
  */
 
-const path = require('path');
-const fs = require('fs');
 const { randomUUID } = require('crypto');
 const Database = require('better-sqlite3');
+const config = require('./config');
 
-const DATA_DIR = path.join(__dirname, 'data');
-const DB_FILE = process.env.BRAIN_DB || path.join(DATA_DIR, 'brain.db');
+const DB_FILE = config.DB_FILE; // aus config (BRAIN_DATA_DIR / BRAIN_DB) — eine Quelle
 const EMBED_DIM = parseInt(process.env.BRAIN_EMBED_DIM || '1024', 10); // bge-m3 = 1024
 
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-
+// Datenverzeichnisse legt config.js bereits an.
 const db = new Database(DB_FILE);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
@@ -273,10 +270,37 @@ function searchNodes(query) {
   return buildSubgraph(ids);
 }
 
+// Startknoten-Auflösung — deterministische Reihenfolge, damit JEDE KI denselben
+// Einstiegspunkt bekommt (kein Claude-Sonderfall mehr):
+//   1. BRAIN_START_NODE (config.START_NODE): exakte ID, sonst exaktes Label
+//   2. Knoten mit Tag `start` (ältester zuerst — stabil)
+//   3. Legacy-Labels „Claude – Startpunkt" / „Start" (Rückwärtskompatibilität)
+//   4. null
+function getStartNodeId() {
+  const pref = config.START_NODE;
+  if (pref) {
+    const byId = db.prepare('SELECT id FROM nodes WHERE id = ?').get(pref);
+    if (byId) return byId.id;
+    const byLabel = db.prepare('SELECT id FROM nodes WHERE label = ?').get(pref);
+    if (byLabel) return byLabel.id;
+  }
+  const tagged = db.prepare(
+    `SELECT n.id FROM nodes n JOIN node_tags t ON t.node_id = n.id
+     WHERE t.tag = 'start' COLLATE NOCASE ORDER BY n.created ASC LIMIT 1`
+  ).get();
+  if (tagged) return tagged.id;
+  for (const label of ['Claude – Startpunkt', 'Start']) {
+    const row = db.prepare('SELECT id FROM nodes WHERE label = ?').get(label);
+    if (row) return row.id;
+  }
+  return null;
+}
+
 // Smart-Mode: Startknoten + erreichbare Knoten bis Tiefe `depth` (BFS).
 function getSmart(depth = Infinity) {
   const brain = getBrain();
-  const start = brain.nodes.find(n => n.label === 'Claude – Startpunkt' || n.label === 'Start');
+  const startId = getStartNodeId();
+  const start = startId ? brain.nodes.find(n => n.id === startId) : null;
   if (!start) return brain;
 
   const visited = new Set();
@@ -798,6 +822,7 @@ module.exports = {
   buildSubgraph,
   countNodes,
   findByLabel,
+  getStartNodeId,
   // Schreiben
   createNode,
   updateNode,

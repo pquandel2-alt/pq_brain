@@ -1,0 +1,22 @@
+# Brain via Docker Compose. `docker compose up -d` startet den Server auf Port 3000.
+# Der named volume `brain-data` hält DB, Backups, Logs UND den Modell-Cache —
+# nach Neustart/Update ist der Datenstand identisch und das Modell bleibt gecacht.
+services:
+  brain:
+    build: .
+    image: pq-brain:latest
+    container_name: pq-brain
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # Optional — Defaults greifen sonst. Beispiele:
+      # - BRAIN_START_NODE=Brain
+      # - BRAIN_CHARS_PER_TOKEN=4
+      # - BRAIN_MCP_TOKEN=dein-token
+      - NODE_ENV=production
+    volumes:
+      - brain-data:/app/data
+
+volumes:
+  brain-data:

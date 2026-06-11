@@ -4,14 +4,16 @@ After=network.target
 
 [Service]
 Type=simple
-User=philipp
-WorkingDirectory=/home/philipp/pq_brain
-ExecStart=/usr/bin/node /home/philipp/pq_brain/server.js
+# __USER__ und __DIR__ werden von setup-service.sh durch den echten Nutzer/Pfad
+# ersetzt. Diese Datei ist eine Vorlage — nicht direkt nach /etc kopieren.
+User=__USER__
+WorkingDirectory=__DIR__
+ExecStart=/usr/bin/env node __DIR__/server.js
 Restart=always
 RestartSec=10
-StandardOutput=append:/home/philipp/pq_brain/brain.log
-StandardError=append:/home/philipp/pq_brain/brain.log
-Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# Optionale Env-Overrides (BRAIN_DATA_DIR, PORT, BRAIN_MODEL_CACHE, ...).
+# Das führende "-" macht die Datei optional — fehlt sie, gelten die Defaults.
+EnvironmentFile=-/etc/default/pq-brain
 Environment="NODE_ENV=production"
 
 [Install]

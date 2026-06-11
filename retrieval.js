@@ -6,10 +6,22 @@
  */
 
 const db = require('./db');
+const config = require('./config');
 const { embed } = require('./embeddings');
 const reranker = require('./reranker');
 
-const estTokens = (s) => Math.ceil((s || '').length / 4); // schneller Schätzer (Zeichen/4)
+// Token-SCHÄTZUNG (keine exakte Messung): Zeichen / charsPerToken. Default aus config
+// (4), per Request kalibrierbar. Clients sollten usedTokensEst als Näherung behandeln.
+const estTokens = (s, charsPerToken = config.CHARS_PER_TOKEN) =>
+  Math.ceil((s || '').length / charsPerToken);
+
+// charsPerToken gegen Unsinn absichern: < 1 würde Tokens explodieren lassen,
+// riesige Werte das Budget aushebeln. Geklemmt auf [1, 20], Default bei ungültig.
+function normCharsPerToken(v) {
+  const n = parseFloat(v);
+  if (!Number.isFinite(n)) return config.CHARS_PER_TOKEN;
+  return Math.min(20, Math.max(1, n));
+}
 
 function previewText(row) {
   if (row.summary) return row.summary;
@@ -116,9 +128,10 @@ async function searchCompact({ q, mode = 'hybrid', limit = 10 }) {
  * rerank: Opt-in (Cross-Encoder, Default aus).
  * expand: Opt-in (A4 — 1-Hop-Graph-Expansion, Default aus).
  */
-async function recall({ q, budget = 4000, limit = 8, rerank: doRerank = false, expand = false, frecency = true }) {
+async function recall({ q, budget = 4000, limit = 8, rerank: doRerank = false, expand = false, frecency = true, charsPerToken }) {
   const lim = Math.max(1, Math.min(parseInt(limit, 10) || 8, 50));
   const bud = Math.max(200, parseInt(budget, 10) || 4000);
+  const cpt = normCharsPerToken(charsPerToken);
 
   const useRerank = doRerank === true || doRerank === 'true';
   const useExpand = expand === true || expand === 'true';
@@ -181,7 +194,7 @@ async function recall({ q, budget = 4000, limit = 8, rerank: doRerank = false, e
     const row = preview.get(id);
     if (!row) continue;
     const text = previewText(row);
-    const cost = estTokens(row.label) + estTokens(text) + 4;
+    const cost = estTokens(row.label, cpt) + estTokens(text, cpt) + 4;
     if (used + cost > bud && results.length > 0) break;
     const entry = { id, label: row.label, type: row.type, preview: text, score: +Number(score).toFixed(4) };
     if (viaMeta.has(id)) entry.via = viaMeta.get(id);
@@ -275,4 +288,59 @@ function neighbors({ id, depth = 1, direction = 'both' }) {
   };
 }
 
-module.exports = { estTokens, previewText, rerankText, rrf, frecencyBoost, rankedIds, searchCompact, recall, suggestLinks, neighbors };
+/**
+ * Session-Briefing: generischer Einstiegskontext für JEDE KI (ersetzt den
+ * Claude-spezifischen SessionStart-Hook). Liefert Startknoten + 1-Hop-Nachbarn +
+ * Graph-Eckdaten — bewusst budgetiert, damit es auch bei großen Graphen kompakt
+ * bleibt (kein Token-Dump). REST (/api/briefing) und MCP (brain_briefing) rufen
+ * EXAKT diese Funktion — kein zweiter, leicht abweichender Startkontext.
+ */
+const BRIEFING_MAX_NEIGHBORS = 30; // Deckel gegen Hub-Knoten mit hunderten Kanten
+
+function buildBriefing({ budget = 1500, charsPerToken } = {}) {
+  const cpt = normCharsPerToken(charsPerToken);
+  const bud = Math.max(200, parseInt(budget, 10) || 1500);
+  const g = db.getBrain();
+  const stats = { nodes: g.nodes.length, links: g.links.length };
+
+  const startId = db.getStartNodeId();
+  let start = null;
+  let neighborsOut = [];
+  if (startId) {
+    const full = db.getNodeFull(startId);
+    if (full) {
+      // Inhalt aufs Budget kürzen — Briefing bleibt eine Übersicht, kein Volltext.
+      const maxContentChars = Math.max(200, Math.floor(bud * cpt * 0.6));
+      let content = full.content || '';
+      let truncated = false;
+      if (content.length > maxContentChars) { content = content.slice(0, maxContentChars).trimEnd(); truncated = true; }
+      start = { id: full.id, label: full.label, type: full.type, summary: full.summary || null, content, truncated };
+      const nb = neighbors({ id: startId, depth: 1, direction: 'both' });
+      if (nb) neighborsOut = nb.nodes.filter(n => n.id !== startId).slice(0, BRIEFING_MAX_NEIGHBORS);
+    }
+  }
+  return { generatedAt: new Date().toISOString(), stats, start, neighbors: neighborsOut };
+}
+
+// Markdown-Rendering des Briefings — generisch formuliert, kein KI-spezifischer Ton.
+function briefingMarkdown(b) {
+  const lines = ['# Brain Briefing', ''];
+  lines.push(`Knowledge graph: ${b.stats.nodes} nodes, ${b.stats.links} links (generated ${b.generatedAt}).`);
+  lines.push('');
+  if (!b.start) {
+    lines.push('No start node configured yet. Set BRAIN_START_NODE, tag a node `start`,');
+    lines.push('or call recall(q)/GET /api/recall?q=... to retrieve relevant memory on demand.');
+    return lines.join('\n');
+  }
+  lines.push(`## Start: ${b.start.label} (${b.start.type})`);
+  if (b.start.summary) lines.push('', b.start.summary);
+  if (b.start.content) lines.push('', b.start.content + (b.start.truncated ? '\n…(truncated — use get() for the full node)' : ''));
+  if (b.neighbors.length) {
+    lines.push('', '## Linked context');
+    for (const n of b.neighbors) lines.push(`- **${n.label}** (${n.type})${n.summary ? ' — ' + n.summary : ''}`);
+  }
+  lines.push('', 'Next: recall(q) for relevant facts, get(id) for a full node, search(q) to explore.');
+  return lines.join('\n');
+}
+
+module.exports = { estTokens, previewText, rerankText, rrf, frecencyBoost, rankedIds, searchCompact, recall, suggestLinks, neighbors, buildBriefing, briefingMarkdown };

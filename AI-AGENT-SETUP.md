@@ -2,22 +2,36 @@
 
 Du bist ein KI-Agent. Dieser Repo ist dein Memory-System. Hier ist wie es funktioniert.
 
+> **Client-spezifisches Andocken** (Claude Code, ChatGPT, OpenAI SDK, LangChain,
+> Gemini/Cursor) steht in [`INTEGRATIONS.md`](./INTEGRATIONS.md). Dieses Dokument
+> beschreibt den generischen REST-Workflow, der mit jeder KI funktioniert.
+
 ## 1. Einmalig: Brain starten
 
 ```bash
 git clone https://github.com/pquandel2-alt/pq_brain.git
 cd pq_brain
 npm install
-cp data/brain.example.json data/brain.json
-node server.js
-# Server läuft auf http://localhost:3000
+node server.js                 # Server läuft auf http://localhost:3000
 ```
 
-Das wars. Brain läuft jetzt auf Port 3000.
+Speicher ist SQLite (`data/brain.db`) — wird beim ersten Start automatisch angelegt,
+keine Beispieldatei nötig. Konfiguration ist optional: `cp .env.example .env` und
+anpassen (alle Werte haben Defaults). Alternativ per Container: `docker compose up -d`.
 
 ---
 
 ## 2. Zu Beginn jeder Konversation: Brain lesen
+
+**Empfohlen** (kompakt, token-schonend): das Briefing holen — Startknoten +
+verlinkter Kontext + Eckdaten in einem Aufruf:
+
+```bash
+curl -s http://localhost:3000/api/briefing            # Markdown
+curl -s "http://localhost:3000/api/recall?q=deine+Frage"   # gezielt nachladen
+```
+
+Den **ganzen** Graphen (token-intensiv, nur bei Bedarf):
 
 ```bash
 curl -s http://localhost:3000/api/brain
@@ -132,14 +146,21 @@ curl -X POST http://localhost:3000/api/links \
 ## 6. REST API Schnellreferenz
 
 ```
-GET    /api/brain                    → ganze Brain { nodes, links }
-PUT    /api/nodes/:id                → Update (Felder mergen)
-POST   /api/nodes                    → Create Node
-DELETE /api/nodes/:id                → Delete Node + Links
-POST   /api/links                    → Link erstellen
-DELETE /api/links                    → Link löschen
-POST   /api/import                   → .md-Dateien importieren (YAML-Frontmatter)
+GET    /api/briefing                 → Session-Einstieg (Markdown oder ?format=json)
+GET    /api/recall?q=                 → gerankte Kurzfassungen im Token-Budget
+GET    /api/tools?format=openai       → Tool-Katalog (Function-Calling)
+GET    /openapi.json                  → OpenAPI-3.1-Vertrag (ChatGPT-Actions)
+GET    /api/brain                     → ganze Brain { nodes, links } (+ ?limit/?offset)
+PUT    /api/nodes/:id                 → Update (Felder mergen)
+POST   /api/nodes                     → Create Node
+DELETE /api/nodes/:id                 → Delete Node + Links
+POST   /api/links                     → Link erstellen
+DELETE /api/links                     → Link löschen
+POST   /api/import                    → .md-Dateien importieren (YAML-Frontmatter)
 ```
+
+Fehler kommen einheitlich als `{ "error": "...", "code": "..." }` (z.B. `NOT_FOUND`,
+`VALIDATION_ERROR`, `LABEL_EXISTS`, `SIMILAR_EXISTS`).
 
 ---
 
@@ -219,11 +240,21 @@ systemctl stop pq-brain         # stoppen
 systemctl disable pq-brain      # Auto-Start deaktivieren
 ```
 
-### Backup
+### Konfiguration (optional)
+
+Alle `BRAIN_*`-Variablen siehe `.env.example`. Bei systemd legt `setup-service.sh`
+automatisch `/etc/default/pq-brain` an; alles hängt an `BRAIN_DATA_DIR`.
+
+### Docker
 
 ```bash
-cp data/brain.json data/brain.backup.$(date +%s).json
+docker compose up -d        # Daten/Modell-Cache im Volume brain-data (überlebt Neustarts)
 ```
+
+### Backup
+
+Brain schreibt automatisch gedrosselte JSON-Snapshots nach `data/backups/`.
+Wiederherstellen via `POST /api/restore/:filename` (siehe `GET /api/backups`).
 
 ### Netzwerk-Zugriff
 
@@ -241,7 +272,7 @@ http://<your-ip>:3000
 | "Cannot POST /api/nodes" | Node mit `POST`, nicht `PUT` |
 | "Source node not found" | Node-IDs sind UUIDs, kopiere exakt |
 | "Link already exists" | Brain dedupliziert, ist ok |
-| "No such file" | curl prüft ob `data/brain.json` existiert |
+| DB-Fehler beim Start | `data/`-Verzeichnis schreibbar? (`BRAIN_DATA_DIR` prüfen) |
 | "Port 3000 in use" | `PORT=3002 node server.js` |
 
 ---
