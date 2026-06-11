@@ -83,10 +83,17 @@
       </div>
     </div>
     <div class="header-right">
+      <button id="btn-maintenance" class="icon-btn" title="Wartung &amp; Hygiene">&#9881;</button>
       <button id="btn-import" class="icon-btn" title="Markdown importieren">&#8659;</button>
       <button id="btn-add" class="fab-mini" title="Neuer Knoten">+</button>
     </div>
   </header>
+
+  <!-- Search results dropdown (semantische Suche) -->
+  <div id="search-results" class="hidden"></div>
+
+  <!-- Context menu (Rechtsklick auf Knoten) -->
+  <div id="ctx-menu" class="hidden"></div>
 
   <!-- Filter bar -->
   <div id="filter-bar">
@@ -125,11 +132,40 @@
       <div id="panel-tabs">
         <button class="tab-btn active" data-tab="edit">Bearbeiten</button>
         <button class="tab-btn" data-tab="preview">Vorschau</button>
+        <button class="tab-btn" data-tab="meta">Details</button>
         <button class="tab-btn" data-tab="links">Verknüpfungen</button>
+        <button class="tab-btn" data-tab="history">Historie</button>
       </div>
       <textarea id="panel-content" placeholder="Markdown-Inhalt..."></textarea>
       <div id="panel-preview" class="hidden markdown-body"></div>
+      <div id="panel-meta-edit" class="hidden">
+        <label>Typ
+          <select id="panel-type">
+            <option value="note">Notiz</option>
+            <option value="idea">Idee</option>
+            <option value="project">Projekt</option>
+            <option value="memory">Memory</option>
+            <option value="reference">Referenz</option>
+          </select>
+        </label>
+        <label>Tags (kommagetrennt)
+          <input type="text" id="panel-tags-input" placeholder="tag1, tag2" autocomplete="off">
+        </label>
+        <label>Summary (1 Satz, verbessert Recall)
+          <input type="text" id="panel-summary" placeholder="Kurzfassung…" autocomplete="off">
+        </label>
+        <label>Gültigkeit (TTL)
+          <select id="panel-ttl">
+            <option value="">dauerhaft</option>
+            <option value="3600">1 Stunde</option>
+            <option value="86400">1 Tag</option>
+            <option value="604800">7 Tage</option>
+            <option value="2592000">30 Tage</option>
+          </select>
+        </label>
+      </div>
       <div id="panel-links-list" class="hidden"></div>
+      <div id="panel-history" class="hidden"></div>
     </div>
     <div id="panel-footer">
       <button id="btn-save" class="btn-primary">Speichern</button>
@@ -186,6 +222,21 @@
       <div class="modal-footer">
         <button id="btn-import-cancel" class="btn-secondary">Abbrechen</button>
         <button id="btn-import-confirm" class="btn-primary">Importieren</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Maintenance / Hygiene Dashboard -->
+  <div id="modal-maintenance" class="modal hidden">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h2>Wartung &amp; Hygiene</h2>
+        <button class="icon-btn" id="btn-maint-close">&#10005;</button>
+      </div>
+      <div id="maint-body"><p class="hint">Lade Bericht…</p></div>
+      <div class="modal-footer">
+        <button id="btn-gardener-run" class="btn-secondary">Gärtner jetzt ausführen</button>
+        <button id="btn-maint-done" class="btn-primary">Schließen</button>
       </div>
     </div>
   </div>

@@ -8,6 +8,7 @@ const db = require('./db');
 const { warmup, MODEL } = require('./embeddings');
 const retrieval = require('./retrieval');
 const operations = require('./operations');
+const gardener = require('./gardener');
 
 const app = express();
 const BACKUP_DIR = path.join(__dirname, 'data', 'backups');
@@ -21,7 +22,9 @@ const BACKUP_MIN_INTERVAL_MS = 60 * 60 * 1000;   // max. 1 Backup pro Stunde
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 });
 
-// Logger
+// Logger — persistenter Append-Stream statt synchronem appendFileSync pro Zeile.
+const logStream = fs.createWriteStream(LOG_FILE, { flags: 'a' });
+logStream.on('error', (err) => console.error('Log stream error:', err.message));
 const logger = {
   log(level, message, context = {}) {
     const timestamp = new Date().toISOString();
@@ -29,11 +32,7 @@ const logger = {
     const line = JSON.stringify(entry);
 
     console.log(`[${level}] ${timestamp} ${message}`);
-    try {
-      fs.appendFileSync(LOG_FILE, line + '\n', 'utf8');
-    } catch (err) {
-      console.error('Failed to write log:', err.message);
-    }
+    logStream.write(line + '\n');
   },
   info(msg, ctx) { this.log('INFO', msg, ctx); },
   warn(msg, ctx) { this.log('WARN', msg, ctx); },
@@ -56,45 +55,54 @@ function getBackupFilename() {
   return `brain.backup.${now}.json`;
 }
 
-function createBackup(data) {
+// In-Memory-Hash des zuletzt geschriebenen Snapshots — erspart das Lesen+Parsen
+// der Vorgänger-Datei bei jedem Lauf. Beim Start einmalig aus neuester Datei gefüllt.
+let lastBackupHash = null;
+let backupDirty = false;
+
+async function initBackupHash() {
   try {
-    if (!fs.existsSync(BACKUP_DIR)) {
-      fs.mkdirSync(BACKUP_DIR, { recursive: true });
-    }
+    const files = (await fs.promises.readdir(BACKUP_DIR)).filter(f => f.startsWith('brain.backup.')).sort();
+    const newest = files.pop();
+    if (!newest) return;
+    const prev = await fs.promises.readFile(path.join(BACKUP_DIR, newest), 'utf8');
+    // Re-Stringify für stabilen Hash unabhängig von Formatierung der Datei.
+    lastBackupHash = createHash('sha1').update(JSON.stringify(JSON.parse(prev))).digest('hex');
+  } catch { /* kein/kaputtes Backup → erstes Backup schreibt frisch */ }
+}
 
-    // Frequenz von der Write-Frequenz entkoppeln: gegen das neueste Backup prüfen.
-    const newest = fs.readdirSync(BACKUP_DIR)
-      .filter(f => f.startsWith('brain.backup.'))
-      .sort()
-      .pop();
+// Asynchrones Backup: einmal stringifizieren (für Hash + Write), Throttle gegen mtime.
+async function createBackup(data, { force = false } = {}) {
+  try {
+    await fs.promises.mkdir(BACKUP_DIR, { recursive: true });
 
-    if (newest) {
-      const newestPath = path.join(BACKUP_DIR, newest);
-      const ageMs = Date.now() - fs.statSync(newestPath).mtimeMs;
+    const files = (await fs.promises.readdir(BACKUP_DIR)).filter(f => f.startsWith('brain.backup.')).sort();
+    const newest = files[files.length - 1];
+    if (newest && !force) {
+      const ageMs = Date.now() - (await fs.promises.stat(path.join(BACKUP_DIR, newest))).mtimeMs;
       if (ageMs < BACKUP_MIN_INTERVAL_MS) {
         logger.debug('Backup skipped (throttle)', { ageMs });
         return;
       }
-      const newHash = createHash('sha1').update(JSON.stringify(data)).digest('hex');
-      try {
-        const prev = JSON.parse(fs.readFileSync(newestPath, 'utf8'));
-        const prevHash = createHash('sha1').update(JSON.stringify(prev)).digest('hex');
-        if (newHash === prevHash) {
-          logger.debug('Backup skipped (unchanged)');
-          return;
-        }
-      } catch { /* fehlerhaftes Backup ignorieren, neues schreiben */ }
+    }
+
+    const compact = JSON.stringify(data);
+    const newHash = createHash('sha1').update(compact).digest('hex');
+    if (newHash === lastBackupHash && !force) {
+      logger.debug('Backup skipped (unchanged)');
+      backupDirty = false;
+      return;
     }
 
     const backupFile = path.join(BACKUP_DIR, getBackupFilename());
-    fs.writeFileSync(backupFile, JSON.stringify(data, null, 2), 'utf8');
+    await fs.promises.writeFile(backupFile, JSON.stringify(data, null, 2), 'utf8');
+    lastBackupHash = newHash;
+    backupDirty = false;
 
-    const files = fs.readdirSync(BACKUP_DIR)
-      .filter(f => f.startsWith('brain.backup.'))
-      .sort()
-      .reverse();
-    for (let i = MAX_BACKUPS; i < files.length; i++) {
-      fs.unlinkSync(path.join(BACKUP_DIR, files[i]));
+    // Alte Snapshots über dem Limit entfernen.
+    const all = (await fs.promises.readdir(BACKUP_DIR)).filter(f => f.startsWith('brain.backup.')).sort().reverse();
+    for (let i = MAX_BACKUPS; i < all.length; i++) {
+      await fs.promises.unlink(path.join(BACKUP_DIR, all[i]));
     }
 
     logger.debug('Backup created', { file: path.basename(backupFile) });
@@ -127,17 +135,25 @@ function restoreBackup(filename) {
   const data = JSON.parse(fs.readFileSync(backupPath, 'utf8'));
   if (!data.nodes || !Array.isArray(data.nodes)) throw new Error('Invalid backup structure');
   db.replaceAll(data);
+  backupDirty = true; // restaurierter Stand soll ins nächste Snapshot
   logger.info('Backup restored', { filename });
   return db.getBrain();
 }
 
-// Nach jedem Write: Health zählen, Frontend live updaten, Backup-Snapshot (async).
+// Nach jedem Write: Health zählen, Frontend live updaten, Backup nur als „dirty"
+// markieren (das eigentliche Snapshot übernimmt das Backup-Intervall / Shutdown).
 function afterWrite() {
   health.lastWrite = new Date();
   health.writeCount++;
+  backupDirty = true;
   const graph = db.getBrain();
   broadcast(graph);
-  setImmediate(() => createBackup(db.exportGraph()));
+}
+
+// Metadaten-Schreiben (z.B. used_count via brain_mark_used): kein Graph-Broadcast,
+// nur Backup-Dirty-Flag.
+function markBackupDirty() {
+  backupDirty = true;
 }
 
 function broadcast(data) {
@@ -163,7 +179,11 @@ function broadcastAccess(nodeIds) {
 }
 
 function broadcastLog(action, labels = []) {
-  const msg = JSON.stringify({ type: 'log', action, labels, ts: new Date().toISOString() });
+  // Persistent speichern (7 Tage Aufbewahrung), Zeitstempel aus der DB übernehmen.
+  let ts;
+  try { ts = db.logAction(action, labels).ts; }
+  catch (err) { logger.error('logAction failed', { error: err.message }); ts = new Date().toISOString(); }
+  const msg = JSON.stringify({ type: 'log', action, labels, ts });
   for (const client of wss.clients) {
     try { if (client.readyState === 1) client.send(msg); } catch { /* ignore */ }
   }
@@ -311,7 +331,8 @@ app.get('/api/recall', async (req, res) => {
     if (!query) return res.status(400).json({ error: 'q required' });
 
     const doRerank = req.query.rerank === 'true'; // Opt-in (Default aus)
-    const out = await retrieval.recall({ q: query, budget: req.query.budget, limit: req.query.limit, rerank: doRerank });
+    const doExpand = req.query.expand === 'true'; // A4: Graph-Expansion Opt-in
+    const out = await retrieval.recall({ q: query, budget: req.query.budget, limit: req.query.limit, rerank: doRerank, expand: doExpand });
     res.json(out);
     if (out.results.length) {
       const ids = out.results.map(r => r.id);
@@ -327,6 +348,44 @@ app.get('/api/recall', async (req, res) => {
   }
 });
 
+// B2: Link-Vorschläge (semantisch ähnliche, unverlinkte Knotenpaare)
+app.get('/api/brain/suggest-links', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit, 10) || 20;
+    const suggestions = await retrieval.suggestLinks({ limit });
+    res.json({ count: suggestions.length, suggestions });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to suggest links' });
+  }
+});
+
+// B1: Link-Vorschlag verwerfen — Paar wird in suggestLinks/Gärtner künftig übersprungen.
+app.post('/api/brain/suggest-links/dismiss', (req, res) => {
+  try {
+    const { source, target } = req.body;
+    if (!source || !target) return res.status(400).json({ error: 'source and target required' });
+    db.dismissSuggestion(source, target);
+    markBackupDirty();
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to dismiss suggestion' });
+  }
+});
+
+// C3: Usage-Feedback (REST-Parität zu brain_mark_used).
+app.post('/api/brain/mark-used', (req, res) => {
+  try {
+    const ids = Array.isArray(req.body.ids) ? req.body.ids : [];
+    if (!ids.length) return res.status(400).json({ error: 'ids required' });
+    const marked = db.markUsed(ids);
+    markBackupDirty();
+    broadcastAccess(ids);
+    res.json({ ok: true, marked });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to mark used' });
+  }
+});
+
 // Health-Report (Graph-Hygiene)
 app.get('/api/brain/health-report', (req, res) => {
   try {
@@ -334,6 +393,13 @@ app.get('/api/brain/health-report', (req, res) => {
   } catch (err) {
     res.status(500).json({ error: 'Failed to build health report' });
   }
+});
+
+// Gärtner manuell anstoßen (läuft sonst täglich automatisch).
+app.post('/api/brain/maintenance', async (req, res) => {
+  const result = await gardenerRun('manual');
+  if (result.error) return res.status(500).json(result);
+  res.json(result);
 });
 
 app.post('/api/nodes', async (req, res) => {
@@ -438,16 +504,32 @@ app.get('/api/nodes/:id/history', (req, res) => {
   }
 });
 
+// C1: Nachbar-Subgraph eines Knotens (fürs GUI-Kontextmenü / Agenten-REST-Parität).
+app.get('/api/nodes/:id/neighbors', (req, res) => {
+  try {
+    const out = retrieval.neighbors({
+      id: req.params.id,
+      depth: req.query.depth,
+      direction: req.query.direction,
+    });
+    if (!out) return res.status(404).json({ error: 'Node not found' });
+    res.json(out);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to read neighbors' });
+  }
+});
+
 // Auf eine frühere Version zurücksetzen (oder gelöschten Knoten wiederherstellen)
-app.post('/api/nodes/:id/revert/:version', (req, res) => {
+// C1: operations.revertNode stellt Vektor korrekt wieder her.
+app.post('/api/nodes/:id/revert/:version', async (req, res) => {
   try {
     const version = parseInt(req.params.version, 10);
     if (isNaN(version)) return res.status(400).json({ error: 'Invalid version' });
-    const node = db.revertNode(req.params.id, version);
-    if (!node) return res.status(404).json({ error: 'Version not found' });
+    const r = await operations.revertNode(req.params.id, version);
+    if (r.error === 'not_found') return res.status(404).json({ error: 'Version not found' });
     afterWrite();
     logger.info('Node reverted', { id: req.params.id, toVersion: version });
-    res.json(node);
+    res.json(r.node);
   } catch (err) {
     health.errorCount++;
     health.lastError = err.message;
@@ -476,6 +558,25 @@ app.post('/api/links', (req, res) => {
     health.errorCount++;
     health.lastError = err.message;
     res.status(500).json({ error: 'Failed to create link' });
+  }
+});
+
+// B3: Label/rel_type einer bestehenden Kante ändern (GUI-Link-Editor).
+app.put('/api/links', (req, res) => {
+  try {
+    const { source, target } = req.body;
+    if (!source || !target) return res.status(400).json({ error: 'source and target required' });
+    const patch = {};
+    if (req.body.label !== undefined) patch.label = String(req.body.label);
+    if (req.body.type !== undefined) patch.relType = req.body.type ? String(req.body.type).trim() || null : null;
+    const result = db.updateLink(source, target, patch);
+    if (result.error === 'not_found') return res.status(404).json({ error: 'Link not found' });
+    if (result.error === 'no_changes') return res.status(400).json({ error: 'No changes provided' });
+    afterWrite();
+    broadcastLog('updated', [getNodeLabel(source), getNodeLabel(target)]);
+    res.json(result.link);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update link' });
   }
 });
 
@@ -601,19 +702,14 @@ app.post('/api/import', (req, res) => {
       }
     }
 
-    // Wikilinks → Kanten auflösen
+    // B1: Wikilinks → Kanten auflösen (via operations.resolveWikilinks, eine Quelle)
     let newLinks = 0;
     const graph = db.getBrain();
-    const labelMap = new Map(graph.nodes.map(n => [n.label, n]));
+    const linksBefore = graph.links.length;
     for (const node of graph.nodes) {
-      const matches = [...(node.content || '').matchAll(/\[\[([^\]]+)\]\]/g)];
-      for (const m of matches) {
-        const target = labelMap.get(m[1].trim());
-        if (!target || target.id === node.id) continue;
-        const r = db.createLink(node.id, target.id, '');
-        if (r.created) newLinks++;
-      }
+      operations.resolveWikilinks(node.id, node.content);
     }
+    newLinks = db.getBrain().links.length - linksBefore;
 
     afterWrite();
     logger.info('Import completed', { imported, updated, links: newLinks });
@@ -640,7 +736,7 @@ function mcpAuth(req, res, next) {
 
 app.post('/mcp', mcpAuth, async (req, res) => {
   try {
-    const mcp = buildMcpServer({ onWrite: afterWrite, onAccess: broadcastAccess, onLog: broadcastLog });
+    const mcp = buildMcpServer({ onWrite: afterWrite, onAccess: broadcastAccess, onLog: broadcastLog, onMetaWrite: markBackupDirty });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on('close', () => { transport.close(); mcp.close(); });
     await mcp.connect(transport);
@@ -665,6 +761,12 @@ wss.on('connection', ws => {
     const graph = db.getBrain();
     const startNode = graph.nodes.find(n => n.label === 'Claude – Startpunkt' || n.label === 'Start');
     ws.send(JSON.stringify({ type: 'update', data: { ...graph, startNodeId: startNode?.id ?? null } }));
+    try {
+      const entries = db.getRecentLog(7);
+      ws.send(JSON.stringify({ type: 'log-history', entries }));
+    } catch (err) {
+      logger.error('log-history send failed', { error: err.message });
+    }
     logger.debug('Client connected', { clients: wss.clients.size });
   } catch (err) {
     logger.error('WS init error', { error: err.message });
@@ -674,9 +776,12 @@ wss.on('connection', ws => {
 // Ephemeral-Cleanup: abgelaufene TTL-Knoten entfernen (alle 60s)
 setInterval(() => {
   try {
+    const prunedLogs = db.pruneLog(7);
+    if (prunedLogs > 0) logger.debug('Action-Log gepruned', { count: prunedLogs });
     const n = db.deleteExpired();
     if (n > 0) {
       logger.info('Ephemeral nodes expired', { count: n });
+      backupDirty = true; // gelöschte Knoten sollen ins nächste Snapshot
       const graph = db.getBrain();
       const startNode = graph.nodes.find(nd => nd.label === 'Claude – Startpunkt' || nd.label === 'Start');
       broadcast({ ...graph, startNodeId: startNode?.id ?? null });
@@ -686,6 +791,44 @@ setInterval(() => {
   }
 }, 60_000);
 
+// Gärtner: tägliche Selbstpflege (Bericht + ggf. Auto-Links) — rein
+// deterministisch, 0 Token. Erstlauf verzögert (Embedding-Warmup abwarten).
+async function gardenerRun(trigger) {
+  try {
+    const result = await gardener.runMaintenance();
+    if (result.changed) afterWrite();
+    logger.info('Gardener run', { trigger, ...result });
+    return result;
+  } catch (err) {
+    logger.error('Gardener run failed', { trigger, error: err.message });
+    return { error: err.message };
+  }
+}
+setInterval(() => gardenerRun('daily'), 24 * 60 * 60_000);
+
+// Backup-Intervall: alle 10 Min prüfen, ob seit dem letzten Snapshot geschrieben
+// wurde (Throttle/Hash-Skip in createBackup). Entkoppelt I/O vom Request-Pfad.
+const BACKUP_CHECK_MS = 10 * 60 * 1000;
+setInterval(() => {
+  if (backupDirty) createBackup(db.exportGraph());
+}, BACKUP_CHECK_MS);
+
+// Graceful Shutdown: letztes Backup erzwingen, damit ein Restart nichts verliert.
+let shuttingDown = false;
+function gracefulShutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logger.info('Shutdown', { signal });
+  const done = () => { try { logStream.end(); } catch {} process.exit(0); };
+  const finish = backupDirty
+    ? createBackup(db.exportGraph(), { force: true }).catch(() => {})
+    : Promise.resolve();
+  finish.finally(done);
+  setTimeout(done, 5000).unref(); // Notausstieg, falls Backup hängt
+}
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
 server.listen(PORT, '0.0.0.0', () => {
   logger.info('Brain server started', { port: PORT, storage: 'sqlite', vectors: db.vecEnabled });
   console.log(`\n✅ Brain läuft auf Port ${PORT} (SQLite${db.vecEnabled ? ' + sqlite-vec' : ''})`);
@@ -693,10 +836,16 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`   Health:  http://localhost:${PORT}/api/health`);
   console.log(`   Recall:  http://localhost:${PORT}/api/recall?q=...\n`);
 
+  initBackupHash(); // Hash des letzten Snapshots in den Speicher laden
+
   // Embedding-Modell vorwärmen, damit der erste Recall schnell ist.
+  // Gärtner-Erstlauf direkt ans Warmup koppeln (statt blindem Timer).
   if (db.vecEnabled) {
     warmup()
       .then(() => logger.info('Embedding model warm', { model: MODEL }))
-      .catch(e => logger.error('Embedding warmup failed', { error: e.message }));
+      .catch(e => logger.error('Embedding warmup failed', { error: e.message }))
+      .finally(() => gardenerRun('startup'));
+  } else {
+    gardenerRun('startup');
   }
 });

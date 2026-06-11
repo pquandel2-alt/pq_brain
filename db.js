@@ -28,6 +28,10 @@ const db = new Database(DB_FILE);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 db.pragma('busy_timeout = 5000'); // mehrere Prozesse (Server + MCP/Backfill) sicher
+db.pragma('synchronous = NORMAL'); // mit WAL crash-sicher; Verlustfenster nur bei Stromausfall
+db.pragma('cache_size = -8000');   // 8 MB Page-Cache
+db.pragma('mmap_size = 268435456'); // 256 MB memory-mapped I/O
+db.pragma('temp_store = MEMORY');
 
 // sqlite-vec laden (optional — Fallback ohne Vektorsuche, falls Extension fehlt)
 let vecEnabled = false;
@@ -84,18 +88,51 @@ db.exec(`
     PRIMARY KEY (node_id, version)
   );
 
-  CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(node_id UNINDEXED, label, content);
+  CREATE TABLE IF NOT EXISTS action_log (
+    id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    action TEXT NOT NULL,
+    labels TEXT NOT NULL DEFAULT '[]',
+    ts     TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_action_log_ts ON action_log(ts);
 
-  CREATE TRIGGER IF NOT EXISTS nodes_ai AFTER INSERT ON nodes BEGIN
-    INSERT INTO nodes_fts(node_id, label, content) VALUES (new.id, new.label, new.content);
-  END;
   CREATE TRIGGER IF NOT EXISTS nodes_ad AFTER DELETE ON nodes BEGIN
     DELETE FROM nodes_fts WHERE node_id = old.id;
   END;
-  CREATE TRIGGER IF NOT EXISTS nodes_au AFTER UPDATE ON nodes BEGIN
-    UPDATE nodes_fts SET label = new.label, content = new.content WHERE node_id = new.id;
-  END;
 `);
+
+// A3: FTS-Migration — nodes_fts um tags-Spalte erweitern (idempotent via Rebuild).
+{
+  const ftsSql = db.prepare("SELECT sql FROM sqlite_master WHERE name = 'nodes_fts'").get()?.sql || '';
+  if (!ftsSql.includes('tags')) {
+    // FTS5 unterstützt kein ALTER TABLE → Tabelle und abhängige Trigger neu aufbauen.
+    db.exec('DROP TABLE IF EXISTS nodes_fts');
+    db.exec('CREATE VIRTUAL TABLE nodes_fts USING fts5(node_id UNINDEXED, label, content, tags)');
+    // Vorhandene Knoten + Tags einspielen.
+    const allNodes = db.prepare('SELECT n.id, n.label, n.content FROM nodes n').all();
+    const insStmt = db.prepare('INSERT INTO nodes_fts(node_id, label, content, tags) VALUES (?, ?, ?, ?)');
+    const tagStmt = db.prepare('SELECT tag FROM node_tags WHERE node_id = ?');
+    const fill = db.transaction(() => {
+      for (const n of allNodes) {
+        const tags = tagStmt.all(n.id).map(r => r.tag).join(' ');
+        insStmt.run(n.id, n.label, n.content, tags);
+      }
+    });
+    fill();
+    console.log('[db] Migration: nodes_fts um tags-Spalte erweitert und neu befüllt');
+  }
+  // Trigger neu erstellen (DROP + CREATE, damit bestehende Trigger mit altem 3-Spalten-Body ersetzt werden).
+  db.exec(`
+    DROP TRIGGER IF EXISTS nodes_ai;
+    DROP TRIGGER IF EXISTS nodes_au;
+    CREATE TRIGGER nodes_ai AFTER INSERT ON nodes BEGIN
+      INSERT INTO nodes_fts(node_id, label, content, tags) VALUES (new.id, new.label, new.content, '');
+    END;
+    CREATE TRIGGER nodes_au AFTER UPDATE ON nodes BEGIN
+      UPDATE nodes_fts SET label = new.label, content = new.content WHERE node_id = new.id;
+    END;
+  `);
+}
 
 // Vektor-Index (Cosine) — nur wenn Extension verfügbar.
 if (vecEnabled) {
@@ -123,6 +160,36 @@ if (vecEnabled) {
   }
   db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_expires ON nodes(expires_at) WHERE expires_at IS NOT NULL');
 }
+
+// ── Schema-Migration: History vollständig (summary/source/ttl) ────────
+{
+  const cols = db.prepare('PRAGMA table_info(node_history)').all().map(c => c.name);
+  if (!cols.includes('summary')) {
+    db.exec('ALTER TABLE node_history ADD COLUMN summary    TEXT');
+    db.exec('ALTER TABLE node_history ADD COLUMN source     TEXT');
+    db.exec('ALTER TABLE node_history ADD COLUMN ttl        INTEGER');
+    db.exec('ALTER TABLE node_history ADD COLUMN expires_at TEXT');
+    console.log('[db] Migration: node_history um summary/source/ttl/expires_at erweitert');
+  }
+}
+
+// ── Schema-Migration: Usage-Feedback (used_count/used_at) ─────────────
+{
+  const cols = db.prepare('PRAGMA table_info(nodes)').all().map(c => c.name);
+  if (!cols.includes('used_count')) {
+    db.exec('ALTER TABLE nodes ADD COLUMN used_count INTEGER NOT NULL DEFAULT 0');
+    db.exec('ALTER TABLE nodes ADD COLUMN used_at    TEXT');
+    console.log('[db] Migration: used_count + used_at hinzugefügt');
+  }
+}
+
+// Verworfene Link-Vorschläge (GUI-Reject) — suggestLinks/Gärtner überspringen diese Paare.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS dismissed_suggestions (
+    pair_key TEXT PRIMARY KEY,
+    created  TEXT NOT NULL
+  )
+`);
 
 // ── Mapper ────────────────────────────────────────────────────────────
 function tagsFor(ids) {
@@ -243,11 +310,14 @@ function findByLabel(label) {
 }
 
 // ── Schreib-Operationen ───────────────────────────────────────────────
-const setTags = db.transaction((nodeId, tags) => {
+// Kein db.transaction() — wird immer aus einer Transaktion heraus gerufen (createNode/updateNode/revertNode).
+function setTags(nodeId, tags) {
   db.prepare('DELETE FROM node_tags WHERE node_id = ?').run(nodeId);
   const ins = db.prepare('INSERT OR IGNORE INTO node_tags(node_id, tag) VALUES (?, ?)');
   for (const t of tags) ins.run(nodeId, t);
-});
+  // A3: FTS-tags-Spalte synchron halten.
+  db.prepare('UPDATE nodes_fts SET tags = ? WHERE node_id = ?').run(tags.join(' '), nodeId);
+}
 
 function currentTags(id) {
   return db.prepare('SELECT tag FROM node_tags WHERE node_id = ?').all(id).map(r => r.tag);
@@ -256,13 +326,15 @@ function currentTags(id) {
 // Snapshot des aktuellen Knoten-Stands in die History (vor Änderung/Löschung).
 function recordHistory(row, op) {
   db.prepare(
-    `INSERT OR REPLACE INTO node_history (node_id, version, label, type, content, tags, changed_at, op)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT OR REPLACE INTO node_history (node_id, version, label, type, content, tags, changed_at, op,
+                                          summary, source, ttl, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(row.id, row.version, row.label, row.type, row.content,
-        JSON.stringify(currentTags(row.id)), new Date().toISOString(), op);
+        JSON.stringify(currentTags(row.id)), new Date().toISOString(), op,
+        row.summary ?? null, row.source ?? null, row.ttl ?? null, row.expires_at ?? null);
 }
 
-const createNode = db.transaction(({ label, type, content, tags = [], summary = null, source = null, ttl = null }) => {
+const createNode = db.transaction(({ label, type = 'note', content = '', tags = [], summary = null, source = null, ttl = null }) => {
   const id = randomUUID();
   const created = new Date().toISOString();
   const expires_at = ttl ? new Date(Date.now() + ttl * 1000).toISOString() : null;
@@ -355,16 +427,51 @@ function getNodeFull(id) {
     updated_at: row.updated_at, accessed_at: row.accessed_at,
     access_count: row.access_count, source: row.source, version: row.version,
     ttl: row.ttl, expires_at: row.expires_at,
+    used_count: row.used_count, used_at: row.used_at,
   };
   for (const k of Object.keys(out)) if (out[k] === null) delete out[k];
   return out;
 }
 
 // Abgelaufene Ephemeral-Knoten löschen. Gibt Anzahl zurück.
-function deleteExpired() {
+// vec_nodes hat kein ON DELETE CASCADE → explizit mitlöschen.
+const deleteExpired = db.transaction(() => {
+  const expired = db.prepare(
+    "SELECT id FROM nodes WHERE expires_at IS NOT NULL AND julianday(expires_at) < julianday('now')"
+  ).all().map(r => r.id);
+  if (expired.length === 0) return 0;
+  if (vecEnabled) {
+    const ph = expired.map(() => '?').join(',');
+    db.prepare(`DELETE FROM vec_nodes WHERE node_id IN (${ph})`).run(...expired);
+  }
   return db.prepare(
     "DELETE FROM nodes WHERE expires_at IS NOT NULL AND julianday(expires_at) < julianday('now')"
   ).run().changes;
+});
+
+// ── Action-Log (persistent, Standard-Aufbewahrung 7 Tage) ──────────────
+function logAction(action, labels = []) {
+  const ts = new Date().toISOString();
+  db.prepare('INSERT INTO action_log (action, labels, ts) VALUES (?, ?, ?)')
+    .run(action, JSON.stringify(labels), ts);
+  return { action, labels, ts };
+}
+
+// Letzte Einträge der vergangenen `days` Tage (älteste zuerst, max `limit`).
+function getRecentLog(days = 7, limit = 500) {
+  const rows = db.prepare(
+    `SELECT action, labels, ts FROM action_log
+     WHERE julianday(ts) > julianday('now', ?)
+     ORDER BY ts DESC LIMIT ?`
+  ).all(`-${days} days`, limit);
+  return rows.reverse().map(r => ({ action: r.action, labels: JSON.parse(r.labels || '[]'), ts: r.ts }));
+}
+
+// Einträge älter als `days` Tage löschen. Gibt Anzahl gelöschter Zeilen zurück.
+function pruneLog(days = 7) {
+  return db.prepare(
+    `DELETE FROM action_log WHERE julianday(ts) < julianday('now', ?)`
+  ).run(`-${days} days`).changes;
 }
 
 // Zugriffs-Zähler (für „gezielten Recall" — search/tags/Einzelknoten).
@@ -377,11 +484,14 @@ const touchAccess = db.transaction((ids) => {
 
 function getHistory(id) {
   return db.prepare(
-    'SELECT version, label, type, content, tags, changed_at, op FROM node_history WHERE node_id = ? ORDER BY version'
+    `SELECT version, label, type, content, tags, changed_at, op,
+            summary, source, ttl, expires_at
+     FROM node_history WHERE node_id = ? ORDER BY version`
   ).all(id).map(h => ({ ...h, tags: JSON.parse(h.tags || '[]') }));
 }
 
 // Knoten auf einen History-Stand zurücksetzen (oder gelöschten wiederherstellen).
+// Gibt { node } zurück (Re-Embedding macht operations.revertNode in JS).
 const revertNode = db.transaction((id, version) => {
   const h = db.prepare('SELECT * FROM node_history WHERE node_id = ? AND version = ?').get(id, version);
   if (!h) return null;
@@ -390,16 +500,33 @@ const revertNode = db.transaction((id, version) => {
 
   if (existing) {
     recordHistory(existing, 'revert-from');
-    db.prepare('UPDATE nodes SET label=?, type=?, content=?, version=?, updated_at=? WHERE id=?')
-      .run(h.label, h.type, h.content, existing.version + 1, new Date().toISOString(), id);
+    db.prepare(
+      `UPDATE nodes SET label=?, type=?, content=?, summary=?, source=?, ttl=?, expires_at=?,
+                        version=?, updated_at=? WHERE id=?`
+    ).run(h.label, h.type, h.content, h.summary ?? null, h.source ?? null,
+          h.ttl ?? null, h.expires_at ?? null,
+          existing.version + 1, new Date().toISOString(), id);
   } else {
     // undelete
-    db.prepare('INSERT INTO nodes (id, label, type, content, created, version) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(id, h.label, h.type, h.content, new Date().toISOString(), h.version + 1);
+    db.prepare(
+      `INSERT INTO nodes (id, label, type, content, summary, source, ttl, expires_at, created, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(id, h.label, h.type, h.content, h.summary ?? null, h.source ?? null,
+          h.ttl ?? null, h.expires_at ?? null,
+          new Date().toISOString(), (h.version ?? 0) + 1);
   }
   setTags(id, tags);
   return getNodeFull(id);
 });
+
+// Entfernt Codeblöcke (``` … ```) und Inline-Code (`…`) — damit [[…]] in
+// Code-Beispielen nicht als Wikilink zählt (genutzt von getHealthReport und
+// operations.resolveWikilinks).
+function stripCode(content) {
+  return String(content || '')
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/`[^`\n]*`/g, '');
+}
 
 // Graph-Hygiene-Report (read-only).
 function getHealthReport() {
@@ -415,7 +542,7 @@ function getHealthReport() {
   const labelSet = new Set(brain.nodes.map(n => n.label));
   const deadWikilinks = [];
   for (const n of brain.nodes) {
-    for (const m of (n.content || '').matchAll(/\[\[([^\]]+)\]\]/g)) {
+    for (const m of stripCode(n.content).matchAll(/\[\[([^\]]+)\]\]/g)) {
       const t = m[1].trim();
       if (!labelSet.has(t)) deadWikilinks.push({ node: n.label, missing: t });
     }
@@ -492,6 +619,105 @@ function nodesNeedingEmbedding() {
   ).all();
 }
 
+// Access-Statistiken (access_count, accessed_at, used_count) für eine Knotenmenge.
+function getAccessStats(ids) {
+  const map = new Map();
+  if (!ids || ids.length === 0) return map;
+  const ph = ids.map(() => '?').join(',');
+  const rows = db.prepare(
+    `SELECT id, access_count, accessed_at, used_count, used_at FROM nodes WHERE id IN (${ph})`
+  ).all(...ids);
+  for (const r of rows) {
+    map.set(r.id, {
+      access_count: r.access_count || 0, accessed_at: r.accessed_at,
+      used_count: r.used_count || 0, used_at: r.used_at,
+    });
+  }
+  return map;
+}
+
+// Usage-Feedback: vom Agenten als „wirklich genutzt" gemeldete Knoten.
+const markUsed = db.transaction((ids) => {
+  if (!ids || ids.length === 0) return 0;
+  const now = new Date().toISOString();
+  const stmt = db.prepare('UPDATE nodes SET used_count = used_count + 1, used_at = ? WHERE id = ?');
+  let n = 0;
+  for (const id of ids) n += stmt.run(now, id).changes;
+  return n;
+});
+
+// Verworfene Link-Vorschläge: sortierter Paar-Schlüssel als Sperre.
+function dismissSuggestion(a, b) {
+  const key = [a, b].sort().join('|');
+  db.prepare('INSERT OR IGNORE INTO dismissed_suggestions(pair_key, created) VALUES (?, ?)')
+    .run(key, new Date().toISOString());
+  return key;
+}
+
+function getDismissedPairs() {
+  return new Set(db.prepare('SELECT pair_key FROM dismissed_suggestions').all().map(r => r.pair_key));
+}
+
+// 1-Hop-Nachbarn einer Knotenmenge (aus links-Tabelle, beide Richtungen).
+function getNeighborIds(ids) {
+  if (!ids || ids.length === 0) return [];
+  const ph = ids.map(() => '?').join(',');
+  const rows = db.prepare(
+    `SELECT CASE WHEN source IN (${ph}) THEN target ELSE source END AS neighbor_id
+     FROM links WHERE source IN (${ph}) OR target IN (${ph})`
+  ).all(...ids, ...ids, ...ids);
+  const idSet = new Set(ids);
+  return [...new Set(rows.map(r => r.neighbor_id).filter(id => !idSet.has(id)))];
+}
+
+// Link-Zeilen zu einer Knotenmenge (für Subgraph/Nachbar-Abfragen).
+// direction: 'out' (ids als source), 'in' (ids als target), 'both'.
+function getNeighborLinks(ids, direction = 'both') {
+  if (!ids || ids.length === 0) return [];
+  const ph = ids.map(() => '?').join(',');
+  let where, params;
+  if (direction === 'out')      { where = `source IN (${ph})`; params = ids; }
+  else if (direction === 'in')  { where = `target IN (${ph})`; params = ids; }
+  else                          { where = `source IN (${ph}) OR target IN (${ph})`; params = [...ids, ...ids]; }
+  return db.prepare(`SELECT source, target, label, rel_type FROM links WHERE ${where}`).all(...params);
+}
+
+// Alle gespeicherten Embeddings als Map<node_id, Float32Array>
+// (für paarweise Ähnlichkeit in suggestLinks — kein Re-Embedding nötig).
+function getAllEmbeddings() {
+  const map = new Map();
+  if (!vecEnabled) return map;
+  for (const r of db.prepare('SELECT node_id, embedding FROM vec_nodes').all()) {
+    const buf = r.embedding;
+    map.set(r.node_id, new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4));
+  }
+  return map;
+}
+
+// Alle Links als Set sortierter "a|b"-Schlüssel (Existenz-Checks in O(1)).
+function getAllLinkPairs() {
+  const set = new Set();
+  for (const r of db.prepare('SELECT source, target FROM links').all()) {
+    set.add([r.source, r.target].sort().join('|'));
+  }
+  return set;
+}
+
+// Label/rel_type einer bestehenden Kante ändern (beide Orientierungen akzeptiert).
+function updateLink(source, target, { label, relType } = {}) {
+  const row = db.prepare(
+    'SELECT source, target FROM links WHERE (source=? AND target=?) OR (source=? AND target=?)'
+  ).get(source, target, target, source);
+  if (!row) return { error: 'not_found' };
+  const sets = [];
+  const params = { s: row.source, t: row.target };
+  if (label !== undefined)   { sets.push('label = @label');      params.label = label; }
+  if (relType !== undefined) { sets.push('rel_type = @relType'); params.relType = relType; }
+  if (sets.length === 0) return { error: 'no_changes' };
+  db.prepare(`UPDATE links SET ${sets.join(', ')} WHERE source = @s AND target = @t`).run(params);
+  return { link: db.prepare('SELECT source, target, label, rel_type FROM links WHERE source = ? AND target = ?').get(row.source, row.target) };
+}
+
 // Preview-Daten (id,label,type,summary,content) für eine Knotenmenge.
 function getNodesPreview(ids) {
   const map = new Map();
@@ -509,7 +735,7 @@ function getNodesPreview(ids) {
 function exportGraph() {
   const nodeRows = db.prepare(
     `SELECT id, label, type, content, summary, created, updated_at, accessed_at,
-            access_count, source, version, ttl, expires_at FROM nodes`
+            access_count, used_count, used_at, source, version, ttl, expires_at FROM nodes`
   ).all();
   const tagMap = tagsFor(null);
   const nodes = nodeRows.map(n => {
@@ -532,9 +758,9 @@ const replaceAll = db.transaction((graph) => {
 
   const insNode = db.prepare(
     `INSERT INTO nodes (id, label, type, content, summary, created, updated_at, accessed_at,
-        access_count, source, version)
+        access_count, used_count, used_at, source, version)
      VALUES (@id, @label, @type, @content, @summary, @created, @updated_at, @accessed_at,
-        @access_count, @source, @version)`
+        @access_count, @used_count, @used_at, @source, @version)`
   );
   for (const n of graph.nodes || []) {
     insNode.run({
@@ -547,6 +773,8 @@ const replaceAll = db.transaction((graph) => {
       updated_at: n.updated_at ?? null,
       accessed_at: n.accessed_at ?? null,
       access_count: n.access_count ?? 0,
+      used_count: n.used_count ?? 0,
+      used_at: n.used_at ?? null,
       source: n.source ?? null,
       version: n.version ?? 1,
     });
@@ -582,7 +810,11 @@ module.exports = {
   getHistory,
   revertNode,
   getHealthReport,
+  stripCode,
   deleteExpired,
+  logAction,
+  getRecentLog,
+  pruneLog,
   // Semantik
   upsertEmbedding,
   deleteEmbedding,
@@ -590,6 +822,15 @@ module.exports = {
   searchKeywordRanked,
   nodesNeedingEmbedding,
   getNodesPreview,
+  getAccessStats,
+  getNeighborIds,
+  getNeighborLinks,
+  getAllEmbeddings,
+  getAllLinkPairs,
+  updateLink,
+  markUsed,
+  dismissSuggestion,
+  getDismissedPairs,
   // Backup/Restore/Migration
   exportGraph,
   replaceAll,

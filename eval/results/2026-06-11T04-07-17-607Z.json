@@ -1,0 +1,1187 @@
+{
+  "ts": "2026-06-11T04:07:17.607Z",
+  "goldVersion": 1,
+  "queryCount": 20,
+  "nodeCount": 27,
+  "accessSum": 413,
+  "embedModel": "Xenova/bge-m3",
+  "rerankModel": "Xenova/bge-reranker-base",
+  "variants": {
+    "keyword": {
+      "aggregate": {
+        "s1": 0,
+        "s3": 0,
+        "s5": 0,
+        "r5": 0,
+        "mrr": 0
+      },
+      "msPerQuery": 0.1,
+      "perQuery": [
+        {
+          "id": "q001",
+          "query": "Welche Karte zeigt mir den Akkustand meiner HA-Geräte als farbige Balken?",
+          "metrics": {
+            "s1": 0,
+            "s3": 0,
+            "s5": 0,
+            "r5": 0,
+            "mrr": 0
+          },
+          "ranks": {
+            "Battery Card": null
+          }
+        },
+        {
+          "id": "q002",
+          "query": "Wo läuft mein persönlicher Knowledge-Graph und auf welchem Port?",
+          "metrics": {
+            "s1": 0,
+            "s3": 0,
+            "s5": 0,
+            "r5": 0,
+            "mrr": 0
+          },
+          "ranks": {
+            "Brain": null
+          }
+        },
+        {
+          "id": "q003",
+          "query": "Wie veröffentliche ich eine neue Version einer Widget-Karte?",
+          "metrics": {
+            "s1": 0,
+            "s3": 0,
+            "s5": 0,
+            "r5": 0,
+            "mrr": 0
+          },
+          "ranks": {
+            "Dev-Tooling & Release-Workflow": null
+          }
+        },
+        {
+          "id": "q004",
+          "query": "Welche HA-Karte eignet sich um Geräte nach Stromverbrauch sortiert anzuzeigen?",
+          "metrics": {
+            "s1": 0,
+            "s3": 0,
+            "s5": 0,
+            "r5": 0,
+            "mrr": 0
+          },
+          "ranks": {
+            "Energy Card": null
+          }
+        },
+        {
+          "id": "q005",
+          "query": "Unter welchem GitHub-Account sind meine Repos zu finden?",
+          "metrics": {
+            "s1": 0,
+            "s3": 0,
+            "s5": 0,
+            "r5": 0,
+            "mrr": 0
+          },
+          "ranks": {
+            "Github Repos": null,
+            "Philipp – User Profil": null
+          }
+        },
+        {
+          "id": "q006",
+          "query": "Gibt es eine Lovelace-Karte mit Glaseffekt und Leuchten beim Schalten?",
+          "metrics": {
+            "s1": 0,
+            "s3": 0,
+            "s5": 0,
+            "r5": 0,
+            "mrr": 0
+          },
+          "ranks": {
+            "Glass Button Card": null
+          }
+        },
+        {
+          "id": "q007",
+          "query": "Wie viele fertige Custom Cards für Home Assistant gibt es im Projekt?",
+          "metrics": {
+            "s1": 0,
+            "s3": 0,
+            "s5": 0,
+            "r5": 0,
+            "mrr": 0
+          },
+          "ranks": {
+            "HA Widgets – Projekt": null
+          }
+        },
+        {
+          "id": "q008",
+          "query": "Wie ist eine Custom Card technisch aufgebaut — Shadow DOM, Editor, Entity-Picker?",
+          "metrics": {
+            "s1": 0,
+            "s3": 0,
+            "s5": 0,
+            "r5": 0,
+            "mrr": 0
+          },
+          "ranks": {
+            "HA Widgets – Technische Muster": null
+          }
+        },
+        {
+          "id": "q009",
+          "query": "Welches Betriebssystem und welche Node-Version nutzt Philipp?",
+          "metrics": {
+            "s1": 0,
+            "s3": 0,
+            "s5": 0,
+            "r5": 0,
+            "mrr": 0
+          },
+          "ranks": {
+            "Philipp – User Profil": null
+          }
+        },
+        {
+          "id": "q010",
+          "query": "Wo läuft das Krypto- und Aktien-Analyse-Dashboard?",
+          "metrics": {
+            "s1": 0,
+            "s3": 0,
+            "s5": 0,
+            "r5": 0,
+            "mrr": 0
+          },
+          "ranks": {
+            "pq_signals": null
+          }
+        },
+        {
+          "id": "q011",
+          "query": "Welche Karte zeigt Rauminformationen im Glassmorphism-Stil mit sortierbaren Sektionen?",
+          "metrics": {
+            "s1": 0,
+            "s3": 0,
+            "s5": 0,
+            "r5": 0,
+            "mrr": 0
+          },
+          "ranks": {
+            "Room Overview Card": null
+          }
+        },
+        {
+          "id": "q012",
+          "query": "Wie kann ich in HA eine Einkaufsliste mit Kategorien und Mengen verwalten?",
+          "metrics": {
+            "s1": 0,
+            "s3": 0,
+            "s5": 0,
+            "r5": 0,
+            "mrr": 0
+          },
+          "ranks": {
+            "Shopping List Card": null
+          }
+        },
+        {
+          "id": "q013",
+          "query": "Welche Karte zeigt Ist-Temperatur und erlaubt das Stellen der Zieltemperatur?",
+          "metrics": {
+            "s1": 0,
+            "s3": 0,
+            "s5": 0,
+            "r5": 0,
+            "mrr": 0
+          },
+          "ranks": {
+            "Thermostat Card": null
+          }
+        },
+        {
+          "id": "q014",
+          "query": "Wie sehe ich in HA wann welche Mülltonne raus muss?",
+          "metrics": {
+            "s1": 0,
+            "s3": 0,
+            "s5": 0,
+            "r5": 0,
+            "mrr": 0
+          },
+          "ranks": {
+            "Trash Widget Card": null
+          }
+        },
+        {
+          "id": "q015",
+          "query": "Gibt es ein Widget das den Status von Waschmaschine oder Trockner anzeigt?",
+          "metrics": {
+            "s1": 0,
+            "s3": 0,
+            "s5": 0,
+            "r5": 0,
+            "mrr": 0
+          },
+          "ranks": {
+            "Washer Card": null
+          }
+        },
+        {
+          "id": "q016",
+          "query": "Welche Karte zeigt das Wetter mit Emoji-Icons im 3-Spalten-Layout?",
+          "metrics": {
+            "s1": 0,
+            "s3": 0,
+            "s5": 0,
+            "r5": 0,
+            "mrr": 0
+          },
+          "ranks": {
+            "Weather Widget Card": null
+          }
+        },
+        {
+          "id": "q017",
+          "query": "Wie lange werden Aktivitäten in der Brain-Oberfläche gespeichert?",
+          "metrics": {
+            "s1": 0,
+            "s3": 0,
+            "s5": 0,
+            "r5": 0,
+            "mrr": 0
+          },
+          "ranks": {
+            "Brain GUI: Persistentes Action-Log (7 Tage)": null
+          }
+        },
+        {
+          "id": "q018",
+          "query": "Welches Tool nutze ich um meinen Memory-Server von mehreren Geräten im Heimnetz zu erreichen?",
+          "metrics": {
+            "s1": 0,
+            "s3": 0,
+            "s5": 0,
+            "r5": 0,
+            "mrr": 0
+          },
+          "ranks": {
+            "Brain": null,
+            "brain-landing": null
+          }
+        },
+        {
+          "id": "q019",
+          "query": "Gibt es eine Karte, mit der ich mehrere Lovelace-Karten per Swipe durchblättern kann?",
+          "metrics": {
+            "s1": 0,
+            "s3": 0,
+            "s5": 0,
+            "r5": 0,
+            "mrr": 0
+          },
+          "ranks": {
+            "Carousel Card": null
+          }
+        },
+        {
+          "id": "q020",
+          "query": "Was ist beim Coden zu beachten — wie Dateien lesen, wie Änderungen machen?",
+          "metrics": {
+            "s1": 0,
+            "s3": 0,
+            "s5": 0,
+            "r5": 0,
+            "mrr": 0
+          },
+          "ranks": {
+            "Coding-Präferenzen": null
+          }
+        }
+      ]
+    },
+    "semantic": {
+      "aggregate": {
+        "s1": 0.85,
+        "s3": 1,
+        "s5": 1,
+        "r5": 0.95,
+        "mrr": 0.925
+      },
+      "msPerQuery": 69,
+      "perQuery": [
+        {
+          "id": "q001",
+          "query": "Welche Karte zeigt mir den Akkustand meiner HA-Geräte als farbige Balken?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "Battery Card": 1
+          }
+        },
+        {
+          "id": "q002",
+          "query": "Wo läuft mein persönlicher Knowledge-Graph und auf welchem Port?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "Brain": 1
+          }
+        },
+        {
+          "id": "q003",
+          "query": "Wie veröffentliche ich eine neue Version einer Widget-Karte?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "Dev-Tooling & Release-Workflow": 1
+          }
+        },
+        {
+          "id": "q004",
+          "query": "Welche HA-Karte eignet sich um Geräte nach Stromverbrauch sortiert anzuzeigen?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "Energy Card": 1
+          }
+        },
+        {
+          "id": "q005",
+          "query": "Unter welchem GitHub-Account sind meine Repos zu finden?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 0.5,
+            "mrr": 1
+          },
+          "ranks": {
+            "Github Repos": 1,
+            "Philipp – User Profil": 6
+          }
+        },
+        {
+          "id": "q006",
+          "query": "Gibt es eine Lovelace-Karte mit Glaseffekt und Leuchten beim Schalten?",
+          "metrics": {
+            "s1": 0,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 0.5
+          },
+          "ranks": {
+            "Glass Button Card": 2
+          }
+        },
+        {
+          "id": "q007",
+          "query": "Wie viele fertige Custom Cards für Home Assistant gibt es im Projekt?",
+          "metrics": {
+            "s1": 0,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 0.5
+          },
+          "ranks": {
+            "HA Widgets – Projekt": 2
+          }
+        },
+        {
+          "id": "q008",
+          "query": "Wie ist eine Custom Card technisch aufgebaut — Shadow DOM, Editor, Entity-Picker?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "HA Widgets – Technische Muster": 1
+          }
+        },
+        {
+          "id": "q009",
+          "query": "Welches Betriebssystem und welche Node-Version nutzt Philipp?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "Philipp – User Profil": 1
+          }
+        },
+        {
+          "id": "q010",
+          "query": "Wo läuft das Krypto- und Aktien-Analyse-Dashboard?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "pq_signals": 1
+          }
+        },
+        {
+          "id": "q011",
+          "query": "Welche Karte zeigt Rauminformationen im Glassmorphism-Stil mit sortierbaren Sektionen?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "Room Overview Card": 1
+          }
+        },
+        {
+          "id": "q012",
+          "query": "Wie kann ich in HA eine Einkaufsliste mit Kategorien und Mengen verwalten?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "Shopping List Card": 1
+          }
+        },
+        {
+          "id": "q013",
+          "query": "Welche Karte zeigt Ist-Temperatur und erlaubt das Stellen der Zieltemperatur?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "Thermostat Card": 1
+          }
+        },
+        {
+          "id": "q014",
+          "query": "Wie sehe ich in HA wann welche Mülltonne raus muss?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "Trash Widget Card": 1
+          }
+        },
+        {
+          "id": "q015",
+          "query": "Gibt es ein Widget das den Status von Waschmaschine oder Trockner anzeigt?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "Washer Card": 1
+          }
+        },
+        {
+          "id": "q016",
+          "query": "Welche Karte zeigt das Wetter mit Emoji-Icons im 3-Spalten-Layout?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "Weather Widget Card": 1
+          }
+        },
+        {
+          "id": "q017",
+          "query": "Wie lange werden Aktivitäten in der Brain-Oberfläche gespeichert?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "Brain GUI: Persistentes Action-Log (7 Tage)": 1
+          }
+        },
+        {
+          "id": "q018",
+          "query": "Welches Tool nutze ich um meinen Memory-Server von mehreren Geräten im Heimnetz zu erreichen?",
+          "metrics": {
+            "s1": 0,
+            "s3": 1,
+            "s5": 1,
+            "r5": 0.5,
+            "mrr": 0.5
+          },
+          "ranks": {
+            "Brain": 2,
+            "brain-landing": 9
+          }
+        },
+        {
+          "id": "q019",
+          "query": "Gibt es eine Karte, mit der ich mehrere Lovelace-Karten per Swipe durchblättern kann?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "Carousel Card": 1
+          }
+        },
+        {
+          "id": "q020",
+          "query": "Was ist beim Coden zu beachten — wie Dateien lesen, wie Änderungen machen?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "Coding-Präferenzen": 1
+          }
+        }
+      ]
+    },
+    "hybrid": {
+      "aggregate": {
+        "s1": 0.25,
+        "s3": 0.75,
+        "s5": 0.8,
+        "r5": 0.775,
+        "mrr": 0.5002
+      },
+      "msPerQuery": 67,
+      "perQuery": [
+        {
+          "id": "q001",
+          "query": "Welche Karte zeigt mir den Akkustand meiner HA-Geräte als farbige Balken?",
+          "metrics": {
+            "s1": 0,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 0.5
+          },
+          "ranks": {
+            "Battery Card": 2
+          }
+        },
+        {
+          "id": "q002",
+          "query": "Wo läuft mein persönlicher Knowledge-Graph und auf welchem Port?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "Brain": 1
+          }
+        },
+        {
+          "id": "q003",
+          "query": "Wie veröffentliche ich eine neue Version einer Widget-Karte?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "Dev-Tooling & Release-Workflow": 1
+          }
+        },
+        {
+          "id": "q004",
+          "query": "Welche HA-Karte eignet sich um Geräte nach Stromverbrauch sortiert anzuzeigen?",
+          "metrics": {
+            "s1": 0,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 0.5
+          },
+          "ranks": {
+            "Energy Card": 2
+          }
+        },
+        {
+          "id": "q005",
+          "query": "Unter welchem GitHub-Account sind meine Repos zu finden?",
+          "metrics": {
+            "s1": 0,
+            "s3": 0,
+            "s5": 0,
+            "r5": 0,
+            "mrr": 0.16666666666666666
+          },
+          "ranks": {
+            "Github Repos": 9,
+            "Philipp – User Profil": 6
+          }
+        },
+        {
+          "id": "q006",
+          "query": "Gibt es eine Lovelace-Karte mit Glaseffekt und Leuchten beim Schalten?",
+          "metrics": {
+            "s1": 0,
+            "s3": 0,
+            "s5": 0,
+            "r5": 0,
+            "mrr": 0.1111111111111111
+          },
+          "ranks": {
+            "Glass Button Card": 9
+          }
+        },
+        {
+          "id": "q007",
+          "query": "Wie viele fertige Custom Cards für Home Assistant gibt es im Projekt?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "HA Widgets – Projekt": 1
+          }
+        },
+        {
+          "id": "q008",
+          "query": "Wie ist eine Custom Card technisch aufgebaut — Shadow DOM, Editor, Entity-Picker?",
+          "metrics": {
+            "s1": 0,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 0.3333333333333333
+          },
+          "ranks": {
+            "HA Widgets – Technische Muster": 3
+          }
+        },
+        {
+          "id": "q009",
+          "query": "Welches Betriebssystem und welche Node-Version nutzt Philipp?",
+          "metrics": {
+            "s1": 0,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 0.5
+          },
+          "ranks": {
+            "Philipp – User Profil": 2
+          }
+        },
+        {
+          "id": "q010",
+          "query": "Wo läuft das Krypto- und Aktien-Analyse-Dashboard?",
+          "metrics": {
+            "s1": 0,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 0.5
+          },
+          "ranks": {
+            "pq_signals": 2
+          }
+        },
+        {
+          "id": "q011",
+          "query": "Welche Karte zeigt Rauminformationen im Glassmorphism-Stil mit sortierbaren Sektionen?",
+          "metrics": {
+            "s1": 0,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 0.3333333333333333
+          },
+          "ranks": {
+            "Room Overview Card": 3
+          }
+        },
+        {
+          "id": "q012",
+          "query": "Wie kann ich in HA eine Einkaufsliste mit Kategorien und Mengen verwalten?",
+          "metrics": {
+            "s1": 0,
+            "s3": 0,
+            "s5": 0,
+            "r5": 0,
+            "mrr": 0.16666666666666666
+          },
+          "ranks": {
+            "Shopping List Card": 6
+          }
+        },
+        {
+          "id": "q013",
+          "query": "Welche Karte zeigt Ist-Temperatur und erlaubt das Stellen der Zieltemperatur?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "Thermostat Card": 1
+          }
+        },
+        {
+          "id": "q014",
+          "query": "Wie sehe ich in HA wann welche Mülltonne raus muss?",
+          "metrics": {
+            "s1": 0,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 0.3333333333333333
+          },
+          "ranks": {
+            "Trash Widget Card": 3
+          }
+        },
+        {
+          "id": "q015",
+          "query": "Gibt es ein Widget das den Status von Waschmaschine oder Trockner anzeigt?",
+          "metrics": {
+            "s1": 0,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 0.3333333333333333
+          },
+          "ranks": {
+            "Washer Card": 3
+          }
+        },
+        {
+          "id": "q016",
+          "query": "Welche Karte zeigt das Wetter mit Emoji-Icons im 3-Spalten-Layout?",
+          "metrics": {
+            "s1": 0,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 0.3333333333333333
+          },
+          "ranks": {
+            "Weather Widget Card": 3
+          }
+        },
+        {
+          "id": "q017",
+          "query": "Wie lange werden Aktivitäten in der Brain-Oberfläche gespeichert?",
+          "metrics": {
+            "s1": 0,
+            "s3": 0,
+            "s5": 0,
+            "r5": 0,
+            "mrr": 0.14285714285714285
+          },
+          "ranks": {
+            "Brain GUI: Persistentes Action-Log (7 Tage)": 7
+          }
+        },
+        {
+          "id": "q018",
+          "query": "Welches Tool nutze ich um meinen Memory-Server von mehreren Geräten im Heimnetz zu erreichen?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 0.5,
+            "mrr": 1
+          },
+          "ranks": {
+            "Brain": 1,
+            "brain-landing": 10
+          }
+        },
+        {
+          "id": "q019",
+          "query": "Gibt es eine Karte, mit der ich mehrere Lovelace-Karten per Swipe durchblättern kann?",
+          "metrics": {
+            "s1": 0,
+            "s3": 0,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 0.25
+          },
+          "ranks": {
+            "Carousel Card": 4
+          }
+        },
+        {
+          "id": "q020",
+          "query": "Was ist beim Coden zu beachten — wie Dateien lesen, wie Änderungen machen?",
+          "metrics": {
+            "s1": 0,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 0.5
+          },
+          "ranks": {
+            "Coding-Präferenzen": 2
+          }
+        }
+      ]
+    },
+    "hybrid-nofrec": {
+      "aggregate": {
+        "s1": 0.85,
+        "s3": 1,
+        "s5": 1,
+        "r5": 0.95,
+        "mrr": 0.925
+      },
+      "msPerQuery": 69.8,
+      "perQuery": [
+        {
+          "id": "q001",
+          "query": "Welche Karte zeigt mir den Akkustand meiner HA-Geräte als farbige Balken?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "Battery Card": 1
+          }
+        },
+        {
+          "id": "q002",
+          "query": "Wo läuft mein persönlicher Knowledge-Graph und auf welchem Port?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "Brain": 1
+          }
+        },
+        {
+          "id": "q003",
+          "query": "Wie veröffentliche ich eine neue Version einer Widget-Karte?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "Dev-Tooling & Release-Workflow": 1
+          }
+        },
+        {
+          "id": "q004",
+          "query": "Welche HA-Karte eignet sich um Geräte nach Stromverbrauch sortiert anzuzeigen?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "Energy Card": 1
+          }
+        },
+        {
+          "id": "q005",
+          "query": "Unter welchem GitHub-Account sind meine Repos zu finden?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 0.5,
+            "mrr": 1
+          },
+          "ranks": {
+            "Github Repos": 1,
+            "Philipp – User Profil": 6
+          }
+        },
+        {
+          "id": "q006",
+          "query": "Gibt es eine Lovelace-Karte mit Glaseffekt und Leuchten beim Schalten?",
+          "metrics": {
+            "s1": 0,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 0.5
+          },
+          "ranks": {
+            "Glass Button Card": 2
+          }
+        },
+        {
+          "id": "q007",
+          "query": "Wie viele fertige Custom Cards für Home Assistant gibt es im Projekt?",
+          "metrics": {
+            "s1": 0,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 0.5
+          },
+          "ranks": {
+            "HA Widgets – Projekt": 2
+          }
+        },
+        {
+          "id": "q008",
+          "query": "Wie ist eine Custom Card technisch aufgebaut — Shadow DOM, Editor, Entity-Picker?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "HA Widgets – Technische Muster": 1
+          }
+        },
+        {
+          "id": "q009",
+          "query": "Welches Betriebssystem und welche Node-Version nutzt Philipp?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "Philipp – User Profil": 1
+          }
+        },
+        {
+          "id": "q010",
+          "query": "Wo läuft das Krypto- und Aktien-Analyse-Dashboard?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "pq_signals": 1
+          }
+        },
+        {
+          "id": "q011",
+          "query": "Welche Karte zeigt Rauminformationen im Glassmorphism-Stil mit sortierbaren Sektionen?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "Room Overview Card": 1
+          }
+        },
+        {
+          "id": "q012",
+          "query": "Wie kann ich in HA eine Einkaufsliste mit Kategorien und Mengen verwalten?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "Shopping List Card": 1
+          }
+        },
+        {
+          "id": "q013",
+          "query": "Welche Karte zeigt Ist-Temperatur und erlaubt das Stellen der Zieltemperatur?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "Thermostat Card": 1
+          }
+        },
+        {
+          "id": "q014",
+          "query": "Wie sehe ich in HA wann welche Mülltonne raus muss?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "Trash Widget Card": 1
+          }
+        },
+        {
+          "id": "q015",
+          "query": "Gibt es ein Widget das den Status von Waschmaschine oder Trockner anzeigt?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "Washer Card": 1
+          }
+        },
+        {
+          "id": "q016",
+          "query": "Welche Karte zeigt das Wetter mit Emoji-Icons im 3-Spalten-Layout?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "Weather Widget Card": 1
+          }
+        },
+        {
+          "id": "q017",
+          "query": "Wie lange werden Aktivitäten in der Brain-Oberfläche gespeichert?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "Brain GUI: Persistentes Action-Log (7 Tage)": 1
+          }
+        },
+        {
+          "id": "q018",
+          "query": "Welches Tool nutze ich um meinen Memory-Server von mehreren Geräten im Heimnetz zu erreichen?",
+          "metrics": {
+            "s1": 0,
+            "s3": 1,
+            "s5": 1,
+            "r5": 0.5,
+            "mrr": 0.5
+          },
+          "ranks": {
+            "Brain": 2,
+            "brain-landing": 9
+          }
+        },
+        {
+          "id": "q019",
+          "query": "Gibt es eine Karte, mit der ich mehrere Lovelace-Karten per Swipe durchblättern kann?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "Carousel Card": 1
+          }
+        },
+        {
+          "id": "q020",
+          "query": "Was ist beim Coden zu beachten — wie Dateien lesen, wie Änderungen machen?",
+          "metrics": {
+            "s1": 1,
+            "s3": 1,
+            "s5": 1,
+            "r5": 1,
+            "mrr": 1
+          },
+          "ranks": {
+            "Coding-Präferenzen": 1
+          }
+        }
+      ]
+    }
+  }
+}

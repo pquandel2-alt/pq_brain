@@ -5,7 +5,10 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "test": "node --test test/",
     "mcp:stdio": "node mcp/stdio.js",
+    "eval": "node eval/run-eval.js",
+    "eval:suggest": "node eval/suggest-gold.js",
     "backfill": "node backfill-embeddings.js",
     "migrate": "node migrate-to-sqlite.js"
   },
