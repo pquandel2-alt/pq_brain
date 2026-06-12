@@ -1,11 +1,11 @@
 /* ── Constants ───────────────────────────────────────── */
 const NODE_COLORS = {
-  memory:  '#4a9eff',
-  note:    '#4aff9a',
-  idea:    '#ffd54a',
-  project: '#c54aff',
+  memory:  '#60a5fa',
+  note:    '#34d399',
+  idea:    '#fbbf24',
+  project: '#a78bfa',
 };
-const DIM_COLOR = 'rgba(80,80,100,0.25)';
+const DIM_COLOR = 'rgba(60,60,70,0.20)';
 
 /* ── State ───────────────────────────────────────────── */
 let rawData = { nodes: [], links: [] };
@@ -57,12 +57,13 @@ function initGraph() {
     .nodeVal(n => n.id === startNodeId ? 6 : 1)
     .nodeOpacity(0.92)
     .nodeRelSize(5)
-    .linkColor(() => 'rgba(100,150,255,0.35)')
+    .nodeResolution(24)
+    .linkColor(() => 'rgba(80,100,140,0.25)')
     .linkWidth(1.2)
     .linkDirectionalParticles(1)
     .linkDirectionalParticleWidth(1.5)
-    .linkDirectionalParticleColor(() => 'rgba(120,170,255,0.6)')
-    .backgroundColor('#0a0a0f')
+    .linkDirectionalParticleColor(() => 'rgba(100,130,180,0.5)')
+    .backgroundColor('#0c0c0e')
     .onNodeClick(handleNodeClick)
     .onNodeHover(handleNodeHover)
     .onBackgroundClick(() => {
@@ -74,6 +75,9 @@ function initGraph() {
     });
 
   graph.d3Force('charge').strength(-120);
+
+  const renderer = graph.renderer();
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
   handleResize();
   window.addEventListener('resize', handleResize);
@@ -221,9 +225,10 @@ function showTooltip(node) {
     tooltipEl = document.createElement('div');
     tooltipEl.style.cssText = `
       position:fixed; pointer-events:none; z-index:50;
-      background:rgba(14,14,22,0.9); border:1px solid rgba(255,255,255,0.1);
-      border-radius:8px; padding:5px 10px; font-size:12px; color:#e8e8f0;
+      background:#111115; border:1px solid rgba(255,255,255,0.12);
+      border-radius:6px; padding:5px 10px; font-size:12px; color:#e4e4e7;
       transition:opacity 0.15s; max-width:160px; word-break:break-word;
+      font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
     `;
     document.body.appendChild(tooltipEl);
   }
@@ -1132,7 +1137,7 @@ function updateLiveStatus(connected) {
     dot.style.cssText = 'display:inline-block;width:7px;height:7px;border-radius:50%;margin-left:6px;vertical-align:middle;transition:background 0.4s';
     document.querySelector('.logo').appendChild(dot);
   }
-  dot.style.background = connected ? '#4aff9a' : '#ff4a6b';
+  dot.style.background = connected ? '#34d399' : '#f87171';
 }
 
 let liveTimer = null;
@@ -1143,8 +1148,8 @@ function showLiveIndicator() {
     el.id = 'live-indicator';
     el.style.cssText = `
       position:fixed; top:calc(var(--header-h) + var(--filter-h) + 10px); right:12px;
-      background:rgba(74,255,154,0.15); border:1px solid rgba(74,255,154,0.3);
-      color:#4aff9a; font-size:11px; padding:4px 10px; border-radius:20px;
+      background:rgba(52,211,153,0.08); border:1px solid rgba(52,211,153,0.2);
+      color:#34d399; font-size:11px; padding:4px 10px; border-radius:4px;
       z-index:200; pointer-events:none; transition:opacity 0.5s;
     `;
     el.textContent = '● Live-Update';

@@ -4,12 +4,12 @@
   "description": "Persönlicher 3D-Wissensgraph",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0a0a0f",
-  "theme_color": "#0a0a0f",
+  "background_color": "#0c0c0e",
+  "theme_color": "#0c0c0e",
   "orientation": "any",
   "icons": [
     {
-      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='32' fill='%230a0a0f'/%3E%3Ccircle cx='96' cy='96' r='18' fill='%234a9eff'/%3E%3Ccircle cx='50' cy='65' r='10' fill='%234aff9a'/%3E%3Ccircle cx='142' cy='65' r='10' fill='%23ffd54a'/%3E%3Ccircle cx='50' cy='127' r='10' fill='%23c54aff'/%3E%3Ccircle cx='142' cy='127' r='10' fill='%234aff9a'/%3E%3Cline x1='96' y1='96' x2='50' y2='65' stroke='rgba(100,150,255,0.5)' stroke-width='2'/%3E%3Cline x1='96' y1='96' x2='142' y2='65' stroke='rgba(100,150,255,0.5)' stroke-width='2'/%3E%3Cline x1='96' y1='96' x2='50' y2='127' stroke='rgba(100,150,255,0.5)' stroke-width='2'/%3E%3Cline x1='96' y1='96' x2='142' y2='127' stroke='rgba(100,150,255,0.5)' stroke-width='2'/%3E%3C/svg%3E",
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='16' fill='%230c0c0e'/%3E%3Ccircle cx='96' cy='96' r='18' fill='%233b82f6'/%3E%3Ccircle cx='50' cy='65' r='10' fill='%2334d399'/%3E%3Ccircle cx='142' cy='65' r='10' fill='%23fbbf24'/%3E%3Ccircle cx='50' cy='127' r='10' fill='%23a78bfa'/%3E%3Ccircle cx='142' cy='127' r='10' fill='%2360a5fa'/%3E%3Cline x1='96' y1='96' x2='50' y2='65' stroke='rgba(80,100,140,0.5)' stroke-width='2'/%3E%3Cline x1='96' y1='96' x2='142' y2='65' stroke='rgba(80,100,140,0.5)' stroke-width='2'/%3E%3Cline x1='96' y1='96' x2='50' y2='127' stroke='rgba(80,100,140,0.5)' stroke-width='2'/%3E%3Cline x1='96' y1='96' x2='142' y2='127' stroke='rgba(80,100,140,0.5)' stroke-width='2'/%3E%3C/svg%3E",
       "sizes": "192x192",
       "type": "image/svg+xml"
     }
