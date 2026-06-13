@@ -275,6 +275,41 @@ const TOOLS = [
     handler: async () => json(db.getHealthReport()),
   },
   {
+    // Auto-Capture: Inbox-Kandidaten aus Sessions reviewen.
+    name: 'brain_inbox',
+    title: 'Inbox (Auto-Capture)',
+    description: 'Verwaltet aus Sessions automatisch extrahierte Knoten-Kandidaten (Tag `inbox`). action="list" (Default) zeigt offene Kandidaten; action="accept" mit id übernimmt einen Kandidaten dauerhaft (Tag + TTL entfernt). Ablehnen via brain_delete_node.',
+    inputSchema: {
+      action: z.enum(['list', 'accept']).optional().describe('list (Default) oder accept'),
+      id: z.string().optional().describe('Knoten-ID (nur bei action=accept)'),
+    },
+    handler: async ({ action = 'list', id }, ctx) => {
+      if (action === 'accept') {
+        if (!id) return fail('id required for accept');
+        const full = db.getNodeFull(id);
+        if (!full) return fail('Node not found: ' + id);
+        const tags = (full.tags || []).filter(t => t !== 'inbox');
+        const r = await operations.updateNode(id, { tags, ttl: null });
+        if (r.error === 'not_found') return fail('Node not found: ' + id);
+        ctx.onWrite();
+        ctx.onLog('updated', [r.node.label]);
+        return json({ accepted: true, node: r.node });
+      }
+      const sub = db.getByTags(['inbox']);
+      const items = sub.nodes.map(n => {
+        const full = db.getNodeFull(n.id);
+        return {
+          id: n.id, label: n.label, type: n.type,
+          summary: full?.summary || null,
+          preview: full ? retrieval.previewText(full) : '',
+          source: full?.source || null,
+          expires_at: full?.expires_at || null,
+        };
+      });
+      return json({ count: items.length, items });
+    },
+  },
+  {
     name: 'brain_link',
     title: 'Knoten verbinden',
     description: 'Erstellt eine Kante zwischen zwei Knoten (optional typisiert, z.B. supersedes, depends-on).',

@@ -6,10 +6,11 @@ const http = require('http');
 const { WebSocketServer } = require('ws');
 const { createHash } = require('crypto');
 const db = require('./db');
-const { warmup, MODEL } = require('./embeddings');
+const { warmup, embed, MODEL } = require('./embeddings');
 const retrieval = require('./retrieval');
 const operations = require('./operations');
 const gardener = require('./gardener');
+const metrics = require('./metrics');
 
 const app = express();
 const BACKUP_DIR = config.BACKUP_DIR;   // alle Pfade aus BRAIN_DATA_DIR (eine Quelle)
@@ -458,6 +459,22 @@ app.post('/api/brain/mark-used', (req, res) => {
   }
 });
 
+// Metriken: Latenzen/Durchsatz (prozesslokal) + Bestands-/Verhaltensstatistik (DB).
+app.get('/api/metrics', (req, res) => {
+  try {
+    const m = metrics.snapshot();
+    const stats = db.getStats({ logDays: config.LOG_RETENTION_DAYS });
+    res.json({
+      uptime: Math.floor((Date.now() - health.startTime.getTime()) / 1000),
+      ...m,
+      stats,
+    });
+  } catch (err) {
+    logger.error('Metrics failed', { error: err.message });
+    sendError(res, 500, 'Failed to build metrics');
+  }
+});
+
 // Health-Report (Graph-Hygiene)
 app.get('/api/brain/health-report', (req, res) => {
   try {
@@ -472,6 +489,108 @@ app.post('/api/brain/maintenance', async (req, res) => {
   const result = await gardenerRun('manual');
   if (result.error) return res.status(500).json(result);
   res.json(result);
+});
+
+// ── Auto-Capture / Inbox ────────────────────────────────────────────────
+// Kandidaten aus Sessions landen als normale Knoten mit Tag `inbox` + TTL +
+// source=session:<id> (kein Schema-Zusatz). Dedup via operations.createNode
+// verhindert Re-Capture bekannten Wissens; nie reviewte Items laufen via TTL ab.
+const INBOX_TAG = 'inbox';
+const INBOX_MAX_NODES = 10; // Deckel pro Session gegen Extraktions-Ausreißer
+
+// Inbox-Kandidaten mit Ablaufdatum (für GUI/Agenten-Review).
+function listInbox() {
+  const sub = db.getByTags([INBOX_TAG]);
+  return sub.nodes.map(n => {
+    const full = db.getNodeFull(n.id);
+    return {
+      id: n.id, label: n.label, type: n.type, tags: n.tags,
+      summary: full?.summary || null,
+      preview: full ? retrieval.previewText(full) : '',
+      source: full?.source || null,
+      created: full?.created || n.created || null,
+      expires_at: full?.expires_at || null,
+    };
+  });
+}
+
+app.get('/api/inbox', (req, res) => {
+  try {
+    const items = listInbox();
+    res.json({ count: items.length, items });
+  } catch (err) {
+    logger.error('Inbox list failed', { error: err.message });
+    sendError(res, 500, 'Failed to list inbox');
+  }
+});
+
+app.post('/api/inbox', async (req, res) => {
+  try {
+    const sessionId = String(req.body.session_id || '').trim();
+    const raw = Array.isArray(req.body.nodes) ? req.body.nodes : [];
+    if (!raw.length) return sendError(res, 400, 'nodes required', { code: 'VALIDATION_ERROR' });
+
+    // Auf INBOX_MAX_NODES kappen und Capture-Metadaten erzwingen.
+    const source = sessionId ? `session:${sessionId}` : 'session:unknown';
+    const nodes = raw.slice(0, INBOX_MAX_NODES).map(n => ({
+      label: validateLabel(n.label),
+      type: validateType(n.type),
+      content: validateContent(n.content),
+      summary: validateSummary(n.summary) ?? null,
+      tags: [...new Set([...validateTags(n.tags), INBOX_TAG])],
+      source,
+      ttl: config.INBOX_TTL,
+      force: false, // Dedup aktiv lassen → bekanntes Wissen nicht doppeln
+    }));
+
+    const out = await operations.bulkCreate({ nodes });
+    if (out.created > 0) {
+      afterWrite();
+      broadcastLog('created', out.results.filter(r => r.ok).slice(0, 3).map(r => r.label));
+    }
+    logger.info('Inbox intake', { session: sessionId, created: out.created, skipped: out.failed });
+    res.json(out);
+  } catch (err) {
+    health.errorCount++;
+    health.lastError = err.message;
+    sendError(res, 400, err.message, { code: 'VALIDATION_ERROR' });
+  }
+});
+
+// Kandidat annehmen: inbox-Tag entfernen + TTL löschen → regulärer Daueknoten.
+app.post('/api/inbox/:id/accept', async (req, res) => {
+  try {
+    const full = db.getNodeFull(req.params.id);
+    if (!full) return sendError(res, 404, 'Node not found', { code: 'NOT_FOUND' });
+    const tags = (full.tags || []).filter(t => t !== INBOX_TAG);
+    const r = await operations.updateNode(req.params.id, { tags, ttl: null });
+    if (r.error === 'not_found') return sendError(res, 404, 'Node not found', { code: 'NOT_FOUND' });
+    afterWrite();
+    broadcastLog('updated', [r.node.label]);
+    logger.info('Inbox accepted', { id: req.params.id, label: r.node.label });
+    res.json(r.node);
+  } catch (err) {
+    health.errorCount++;
+    health.lastError = err.message;
+    sendError(res, 400, err.message, { code: 'VALIDATION_ERROR' });
+  }
+});
+
+// Review-Entscheidungen (accepted/rejected/expired) als Trainingsdaten-Export.
+// format=jsonl liefert eine Entscheidung pro Zeile (direkt Fine-Tune-tauglich).
+app.get('/api/inbox/decisions', (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 500, 5000);
+    const items = db.getInboxDecisions({ limit });
+    if (req.query.format === 'jsonl') {
+      res.type('text/plain');
+      return res.send(items.map(i => JSON.stringify(i)).join('\n'));
+    }
+    res.json({ count: items.length, items });
+  } catch (err) {
+    logger.error('Inbox decisions list failed', { error: err.message });
+    sendError(res, 500, 'Failed to list inbox decisions');
+  }
 });
 
 app.post('/api/nodes', async (req, res) => {
@@ -847,7 +966,7 @@ wss.on('connection', ws => {
 // Ephemeral-Cleanup: abgelaufene TTL-Knoten entfernen (alle 60s)
 setInterval(() => {
   try {
-    const prunedLogs = db.pruneLog(7);
+    const prunedLogs = db.pruneLog(config.LOG_RETENTION_DAYS);
     if (prunedLogs > 0) logger.debug('Action-Log gepruned', { count: prunedLogs });
     const n = db.deleteExpired();
     if (n > 0) {
@@ -875,6 +994,38 @@ async function gardenerRun(trigger) {
   }
 }
 setInterval(() => gardenerRun('daily'), 24 * 60 * 60_000);
+
+// Embedding-Drain: Knoten ohne Vektor nachträglich embedden (z.B. Kaltstart-Skip
+// in operations.createNode oder Modellwechsel). Sequentiell, niedrige Priorität.
+// Läuft nach dem Warmup einmalig und danach alle 5 Min.
+let draining = false;
+async function drainEmbeddings(trigger) {
+  if (draining || !db.vecEnabled) return;
+  draining = true;
+  let done = 0;
+  try {
+    const todo = db.nodesNeedingEmbedding();
+    for (const row of todo) {
+      const full = db.getNodeFull(row.id);
+      if (!full) continue;
+      try {
+        const vec = await embed(operations.embeddingText(full), 'passage');
+        db.upsertEmbedding(row.id, vec, MODEL);
+        done++;
+      } catch (err) {
+        logger.error('Drain embed failed', { id: row.id, error: err.message });
+      }
+      await new Promise(r => setImmediate(r)); // Event-Loop nicht blockieren
+    }
+    if (done > 0) logger.info('Embedding drain', { trigger, embedded: done });
+  } catch (err) {
+    logger.error('Embedding drain failed', { trigger, error: err.message });
+  } finally {
+    draining = false;
+  }
+}
+const DRAIN_CHECK_MS = 5 * 60 * 1000;
+setInterval(() => drainEmbeddings('interval'), DRAIN_CHECK_MS);
 
 // Backup-Intervall: alle 10 Min prüfen, ob seit dem letzten Snapshot geschrieben
 // wurde (Throttle/Hash-Skip in createBackup). Entkoppelt I/O vom Request-Pfad.
@@ -914,7 +1065,7 @@ server.listen(PORT, '0.0.0.0', () => {
     warmup()
       .then(() => logger.info('Embedding model warm', { model: MODEL }))
       .catch(e => logger.error('Embedding warmup failed', { error: e.message }))
-      .finally(() => gardenerRun('startup'));
+      .finally(() => { gardenerRun('startup'); drainEmbeddings('startup'); });
   } else {
     gardenerRun('startup');
   }

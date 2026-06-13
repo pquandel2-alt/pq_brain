@@ -33,9 +33,11 @@ async function collectFindings() {
   const health = db.getHealthReport();
   // Der Bericht selbst zählt nicht als Pflegefall — und nicht im Bestand
   // (sonst änderte sich der Bericht durch seine eigene Erstanlage).
+  // orphans/neverAccessed/missingSummaries/staleNodes sind jetzt {id,label}-Objekte.
   if (db.findByLabel(REPORT_LABEL)) health.totals.nodes -= 1;
-  health.orphans = health.orphans.filter(l => l !== REPORT_LABEL);
-  health.neverAccessed = health.neverAccessed.filter(l => l !== REPORT_LABEL);
+  const notReport = (x) => (x.label || x) !== REPORT_LABEL;
+  health.orphans = health.orphans.filter(notReport);
+  health.neverAccessed = health.neverAccessed.filter(notReport);
 
   let suggestions = [];
   try {
@@ -53,17 +55,25 @@ async function collectFindings() {
   }
   const remaining = suggestions.filter(s => !autoLinked.includes(s));
 
-  const missingSummaries = db.db.prepare(
-    "SELECT label FROM nodes WHERE (summary IS NULL OR TRIM(summary) = '') AND label != ? ORDER BY label"
-  ).all(REPORT_LABEL).map(r => r.label);
+  // Auto-Capture: offene Inbox-Kandidaten (Tag `inbox`). Sie sind transient und
+  // sollen die übrigen Pflege-Sektionen nicht verrauschen → eigene Sektion +
+  // Ausschluss aus Waisen/Summary-Lücken (sie sind ohnehin noch nicht reviewt).
+  const inbox = db.db.prepare(
+    `SELECT n.label FROM nodes n JOIN node_tags t ON t.node_id = n.id
+     WHERE t.tag = 'inbox' COLLATE NOCASE
+       AND (n.expires_at IS NULL OR julianday(n.expires_at) > julianday('now'))
+     ORDER BY n.created DESC`
+  ).all().map(r => r.label);
+  const inboxSet = new Set(inbox);
+  const keep = (x) => notReport(x) && !inboxSet.has(x.label || x);
+  health.orphans = health.orphans.filter(keep);
 
-  const staleNodes = db.db.prepare(
-    `SELECT label, COALESCE(updated_at, created) AS last FROM nodes
-     WHERE julianday(COALESCE(updated_at, created)) < julianday('now', ?) AND label != ?
-     ORDER BY last`
-  ).all(`-${STALE_DAYS} days`, REPORT_LABEL).map(r => ({ label: r.label, last: (r.last || '').slice(0, 10) }));
+  // missingSummaries/staleNodes kommen jetzt aus dem Health-Report (eine Quelle);
+  // hier nur noch um Bericht + Inbox bereinigt.
+  const missingSummaries = health.missingSummaries.filter(keep);
+  const staleNodes = health.staleNodes.filter(keep);
 
-  return { health, autoLinked, suggestions: remaining, missingSummaries, staleNodes };
+  return { health, autoLinked, suggestions: remaining, missingSummaries, staleNodes, inbox };
 }
 
 // Pure Function: Befunde → Markdown (bewusst ohne Zeitstempel, damit der
@@ -81,12 +91,13 @@ function buildReport(f) {
   lines.push(`**Bestand:** ${f.health.totals.nodes} Knoten, ${f.health.totals.links} Links`);
   lines.push('');
 
+  section('📥 Inbox — Auto-Capture-Kandidaten (bitte reviewen)', f.inbox || [], l => l);
   section('Auto-Links neu angelegt (rel_type=auto)', f.autoLinked,
     s => `${s.source.label} ↔ ${s.target.label} (${s.similarity})`);
   section('Link-Vorschläge — bitte prüfen', f.suggestions,
     s => `${s.source.label} ↔ ${s.target.label} (${s.similarity})`);
-  section('Knoten ohne Summary', f.missingSummaries, l => l);
-  section('Waisen (keine Verbindungen)', f.health.orphans, l => l);
+  section('Knoten ohne Summary', f.missingSummaries, l => l.label || l);
+  section('Waisen (keine Verbindungen)', f.health.orphans, l => l.label || l);
   section('Doppelte Labels', f.health.duplicateLabels,
     d => `${d.label} (${d.count}×)`);
   section('Tote Wikilinks', f.health.deadWikilinks,
@@ -111,6 +122,7 @@ function summarize(f, changed) {
     duplicateLabels: f.health.duplicateLabels.length,
     deadWikilinks: f.health.deadWikilinks.length,
     staleNodes: f.staleNodes.length,
+    inbox: (f.inbox || []).length,
   };
 }
 

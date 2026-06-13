@@ -20,12 +20,22 @@ chmod +x install.sh
 ./install.sh
 ```
 
-`install.sh` installs Node.js 22, build tools, npm dependencies, and (optionally) the systemd service so Brain auto-starts on boot. One script, no Docker required.
+`install.sh` installs Node.js 22, build tools, npm dependencies, and (optionally) the systemd service so Brain auto-starts on boot. It also offers to install **Ollama + Auto-Capture** — fully local knowledge extraction from AI sessions, no cloud account needed. Choose your model from a menu (qwen2.5:3b, llama3.2:3b, phi4-mini, mistral:7b or custom).
 
-**Docker (any OS):**
+**Docker — Brain only:**
 
 ```bash
 docker compose up -d
+```
+
+**Docker — Brain + Ollama (fully local, no cloud):**
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.ollama.yml up -d
+
+# Pick a different model (default: qwen2.5:3b):
+BRAIN_CAPTURE_OLLAMA_MODEL=llama3.2:3b \
+  docker compose -f docker-compose.yml -f docker-compose.ollama.yml up -d
 ```
 
 **Manual (Node.js 22+ already installed):**
@@ -87,6 +97,56 @@ All highlights are driven by WebSocket events — the graph updates live as the 
 
    <img width="1905" height="882" alt="grafik" src="https://github.com/user-attachments/assets/791b946f-ebd0-4c33-ba2d-6b86d745840a" />
 
+## Auto-Capture
+
+Brain can automatically extract knowledge from Claude Code session transcripts and queue it as **Inbox candidates** for your review. No manual brain_create_node calls needed after a session.
+
+**How it works:**
+1. At session end, `examples/hooks/brain-capture.sh` reads the transcript, asks a model to extract durable knowledge (decisions, preferences, solved problems), and sends it to `POST /api/inbox`.
+2. Candidates land as normal nodes tagged `inbox` with a TTL — visible in the **📥 Inbox** button in the GUI.
+3. You review each candidate: **accept** (becomes a permanent node) or **discard** (deleted). Every decision is logged as a labeled training example.
+4. Items never reviewed expire automatically via TTL (logged as `expired`).
+
+**Install (Claude Code):**
+
+```bash
+cp examples/hooks/brain-capture.sh ~/.claude/hooks/
+chmod +x ~/.claude/hooks/brain-capture.sh
+```
+
+Register in `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "SessionEnd": [
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/brain-capture.sh" } ] }
+    ]
+  }
+}
+```
+
+**Backend options** — default uses Claude (covered by your Claude Code subscription). Switch to a local model via env var:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BRAIN_CAPTURE_BACKEND` | `claude` | `claude` or `ollama` |
+| `BRAIN_CAPTURE_MODEL` | `haiku` | Claude model (when backend=claude) |
+| `OLLAMA_URL` | `http://localhost:11434` | Ollama base URL |
+| `BRAIN_CAPTURE_OLLAMA_MODEL` | `qwen2.5:3b` | Ollama model name |
+| `BRAIN_CAPTURE_OLLAMA_TIMEOUT` | `1800` | Max seconds for local inference |
+| `BRAIN_CAPTURE_MIN_MESSAGES` | `10` | Skip sessions shorter than this |
+| `BRAIN_CAPTURE_MAX_CHARS` | `30000` | Transcript chars sent to the model |
+
+The hook is fail-silent — any error exits cleanly without blocking the session.
+
+**Training data:** Every inbox review decision is stored in `inbox_decisions` (SQLite). Export for fine-tuning:
+
+```bash
+curl -s 'http://localhost:3000/api/inbox/decisions?format=jsonl'
+# → one JSON line per decision: { label, content, summary, decision: "accepted|rejected|expired", ... }
+```
+
 ## REST API
 
 | Method | Path | Description |
@@ -106,6 +166,10 @@ All highlights are driven by WebSocket events — the graph updates live as the 
 | `POST` | `/api/links` | `{ source, target, label?, type? }` — typed edges supported |
 | `DELETE` | `/api/links` | `{ source, target }` |
 | `POST` | `/api/import` | Import `.md` files with YAML frontmatter from a directory path |
+| `GET` | `/api/inbox` | List open inbox candidates (tag `inbox`, with TTL + source) |
+| `POST` | `/api/inbox` | Submit capture candidates `{ session_id, nodes[] }` — dedup active |
+| `POST` | `/api/inbox/:id/accept` | Accept candidate: removes `inbox` tag + TTL |
+| `GET` | `/api/inbox/decisions?limit=&format=json\|jsonl` | Export review decisions as training data |
 | `POST` | `/api/restore/:filename` | Restore from a backup snapshot |
 | `POST` | `/mcp` | MCP Streamable HTTP endpoint |
 | `GET` | `/api/health` | Server status, uptime, node/link counts |

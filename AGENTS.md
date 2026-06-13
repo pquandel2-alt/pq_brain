@@ -4,17 +4,17 @@ Brain is your persistent knowledge graph. It runs as a local service on **port 3
 
 ## Quick orientation
 
-Brain is already running. Start here:
+Brain is already running. Start every session by reading the overview:
 
 ```bash
 curl -s "http://localhost:3000/api/brain?smart=true&depth=1&fields=label,type,tags,summary"
 ```
 
-This returns the graph overview. Read it before doing anything else.
+Or use the `brain_recall` MCP tool if available.
 
-## MCP tools (primary interface)
+## MCP tools (if your client supports MCP)
 
-Brain is registered as MCP server `brain`. Use these tools:
+Brain registers as MCP server `brain` at `http://localhost:3000/mcp`.
 
 | Tool | When to use |
 |------|-------------|
@@ -30,7 +30,7 @@ Brain is registered as MCP server `brain`. Use these tools:
 | `brain_history` | Version history of a node |
 | `brain_inbox` | Review auto-captured nodes pending approval |
 
-## REST API fallback (if MCP is not connected)
+## REST API (works with any AI)
 
 ```bash
 curl -s "http://localhost:3000/api/recall?q=<query>&budget=2000"     # recall
@@ -44,44 +44,48 @@ curl -X PUT http://localhost:3000/api/nodes/<id> \
 curl http://localhost:3000/api/health
 ```
 
-## Rules
+## Rules — follow these in every session
 
-- **Brain is the single source of truth.** Always read Brain before answering questions about the user's projects, preferences, or history.
-- **Write back immediately.** New insights, decisions, and project progress → `brain_create_node` or `brain_update_node`. Don't save it for later.
+- **Read Brain first.** Before answering questions about the user's projects, preferences, or history, always check Brain.
+- **Write back immediately.** New insights, decisions, project progress → `brain_create_node` or `brain_update_node`. Do not save for later.
 - **Always include a `summary`** when creating/updating nodes (1 concise sentence). This improves recall quality significantly.
 - **Always link after creating.** After every `brain_create_node`, call `brain_suggest_links` and apply all relevant suggestions with `brain_link`. Nodes must not remain isolated.
-- **Token discipline.** `brain_recall` first, then `brain_get` for specifics. Never load the full graph when a targeted recall suffices.
+- **Token discipline.** Use `brain_recall` first, then `brain_get` for specifics. Never load the full graph when a targeted recall suffices.
 - **Check for duplicates first.** The dedup check runs automatically on create, but if `similar_exists` is returned, read the existing node before deciding whether to force-create.
 
-## Automatic hooks (Claude Code)
+## Project node check
 
-If `install-hooks-claude.sh` was run, these behaviors are hardwired into the Claude Code harness:
+At the start of each session in a project directory, check whether a Brain node exists for the current project:
 
-| Hook | Trigger | Action |
-|------|---------|--------|
-| `SessionStart` | Session start | Loads Brain briefing + checks for project node |
-| `PreToolUse` | First Edit/Write/Bash | Injects project recall into context (once/session) |
-| `PostToolUse` | After brain_create/update_node | Auto-generates summary if missing, auto-links |
-| `Stop` | After each response (once/session) | Reminds AI to write to Brain + triggers auto-capture |
-| `SessionEnd` | Session end | Auto-capture fallback |
+```bash
+curl -s "http://localhost:3000/api/recall?q=<project-name>+project&budget=300"
+```
 
-### Project node check
-
-The `SessionStart` hook signals whether a Brain node exists for the current project directory:
-
-- `"Brain: node for 'xyz' found."` → continue normally
-- `"Brain: NO node for 'xyz' found -- please create one!"` → **immediately** call `brain_create_node`:
-  - `type: "project"`, `label`: project name, `summary`: one sentence, `tags`: relevant tags
-  - Then link it to related nodes with `brain_link`
+If no node is found → immediately create one:
+- `type: "project"`, `label`: project name (= directory name)
+- `summary`: one sentence describing what the project does
+- `tags`: relevant tags
+- Then link it to related nodes
 
 ## First-time setup for a new Brain instance
 
-If this is a fresh Brain with no nodes yet, create the starter graph:
+If this is a fresh Brain with no nodes yet, create the starter graph before anything else:
 
-1. **Start node** — `type: "memory"`, label: `"AI – Start"`, content describing where to navigate first
-2. **User profile** — `type: "memory"`, label: `"User Profile"`, content: user's name, role, goals, preferences
+1. **Start node** — `type: "memory"`, label: `"AI – Start"`, content: brief overview of the graph structure
+2. **User profile** — `type: "memory"`, label: `"User Profile"`, content: user's name, role, goals, tech stack, preferences (ask the user!)
 3. **Projects node** — `type: "memory"`, label: `"Projects"`, content: list of active projects
 4. Link all three together
 5. Ask the user what projects they're working on and create a node for each
 
-Ask the user before creating nodes — don't assume.
+**Always ask the user before creating nodes — don't assume.**
+
+## Claude Code users: additional automation
+
+Claude Code users can run `./install-hooks-claude.sh` after `./install.sh` to get hardwired harness hooks:
+
+- Auto-load Brain briefing at session start
+- Auto-check for project nodes
+- Auto-link + auto-summarize after every node create/update
+- Auto-capture session insights to the Brain inbox
+
+See `CLAUDE.md` for details. Other AI tools achieve the same via the rules in this file.

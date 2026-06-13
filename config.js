@@ -49,6 +49,22 @@ const START_NODE = (process.env.BRAIN_START_NODE || '').trim();
 
 const PORT = parseInt(process.env.PORT, 10) || 3000;
 
+// Auto-Capture: TTL (Sekunden) für Inbox-Kandidaten aus Sessions. Nie reviewte
+// Kandidaten laufen automatisch ab (vorhandene TTL-Maschinerie) → kein Müll.
+// Default 14 Tage. 0/negativ = kein Ablauf (dauerhaft im Inbox bis Review).
+const INBOX_TTL = (() => {
+  const v = parseInt(process.env.BRAIN_INBOX_TTL, 10);
+  if (Number.isFinite(v)) return v > 0 ? v : null;
+  return 14 * 24 * 60 * 60; // 14 Tage
+})();
+
+// Action-Log-Aufbewahrung (Tage) — Basis für Metrik-Trends. War fest 7;
+// für /api/metrics-Trends auf 30 angehoben, per Env überschreibbar.
+const LOG_RETENTION_DAYS = (() => {
+  const v = parseInt(process.env.BRAIN_LOG_RETENTION_DAYS, 10);
+  return Number.isFinite(v) && v > 0 ? v : 30;
+})();
+
 // Version aus package.json — die EINE Quelle, von /api/health und MCP geteilt.
 let VERSION = '0.0.0';
 try { VERSION = require('./package.json').version || VERSION; } catch { /* keep default */ }
@@ -61,5 +77,5 @@ for (const dir of [DATA_DIR, BACKUP_DIR, LOG_DIR, MODEL_CACHE_DIR]) {
 
 module.exports = {
   ROOT, DATA_DIR, DB_FILE, BACKUP_DIR, LOG_DIR, LOG_FILE, MODEL_CACHE_DIR,
-  CHARS_PER_TOKEN, START_NODE, PORT, VERSION,
+  CHARS_PER_TOKEN, START_NODE, PORT, VERSION, INBOX_TTL, LOG_RETENTION_DAYS,
 };

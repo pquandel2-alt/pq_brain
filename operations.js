@@ -9,7 +9,8 @@
  */
 
 const db = require('./db');
-const { embed, MODEL } = require('./embeddings');
+const { embed, MODEL, isWarm } = require('./embeddings');
+const metrics = require('./metrics');
 
 const DEDUP_DISTANCE = parseFloat(process.env.BRAIN_DEDUP_DISTANCE || '0.12');
 
@@ -22,7 +23,17 @@ function embeddingText({ label = '', summary = '', content = '' }) {
   return parts.join('\n');
 }
 
-async function createNode({ label, type = 'note', content = '', tags = [], summary = null, source = null, ttl = null, force = false }) {
+async function createNode(spec) {
+  const _t0 = Date.now();
+  metrics.counter('create.calls');
+  try {
+    return await createNodeImpl(spec);
+  } finally {
+    metrics.observe('create', Date.now() - _t0);
+  }
+}
+
+async function createNodeImpl({ label, type = 'note', content = '', tags = [], summary = null, source = null, ttl = null, force = false }) {
   const lbl = String(label || '').trim();
   if (!lbl) return { error: 'label_required' };
 
@@ -30,25 +41,34 @@ async function createNode({ label, type = 'note', content = '', tags = [], summa
   if (existing) return { error: 'label_exists', existing: { id: existing.id, label: existing.label } };
 
   // A1: Embedding-Text enthält Label + Summary + Content.
+  // Kaltstart-Entkopplung: ist das Modell noch nicht warm (erster Load dauert
+  // 10–30s), blockiert das Anlegen nicht — der Knoten wird sofort gespeichert und
+  // später vom Drain-Loop (server.js) embeddet. Trade-off: in diesem kurzen
+  // Fenster entfällt der semantische Dedup-Check (dedupSkipped meldet das).
   let vec = null;
+  let dedupSkipped = false;
   if (db.vecEnabled) {
-    try {
-      vec = await embed(embeddingText({ label: lbl, summary: summary || '', content }), 'passage');
-      if (!force) {
-        const near = db.searchSemantic(vec, 1)[0];
-        if (near && near.distance < DEDUP_DISTANCE) {
-          const sim = db.getNodeFull(near.node_id);
-          // C2: Preview mitliefern → Agent spart den separaten brain_get vor der Merge-Entscheidung.
-          return {
-            error: 'similar_exists',
-            similarity: +(1 - near.distance).toFixed(3),
-            similar: sim
-              ? { id: sim.id, label: sim.label, type: sim.type, preview: require('./retrieval').previewText(sim) }
-              : { id: near.node_id },
-          };
+    if (!isWarm()) {
+      dedupSkipped = true;
+    } else {
+      try {
+        vec = await embed(embeddingText({ label: lbl, summary: summary || '', content }), 'passage');
+        if (!force) {
+          const near = db.searchSemantic(vec, 1)[0];
+          if (near && near.distance < DEDUP_DISTANCE) {
+            const sim = db.getNodeFull(near.node_id);
+            // C2: Preview mitliefern → Agent spart den separaten brain_get vor der Merge-Entscheidung.
+            return {
+              error: 'similar_exists',
+              similarity: +(1 - near.distance).toFixed(3),
+              similar: sim
+                ? { id: sim.id, label: sim.label, type: sim.type, preview: require('./retrieval').previewText(sim) }
+                : { id: near.node_id },
+            };
+          }
         }
-      }
-    } catch { /* Embedding optional — Write nicht blockieren */ }
+      } catch { /* Embedding optional — Write nicht blockieren */ }
+    }
   }
 
   const node = db.createNode({ label: lbl, type, content, tags, summary, source, ttl });
@@ -57,10 +77,20 @@ async function createNode({ label, type = 'note', content = '', tags = [], summa
   // B1: [[Wikilinks]] im content zu Kanten auflösen.
   if (content) resolveWikilinks(node.id, content);
 
-  return { node };
+  return dedupSkipped ? { node, dedupSkipped: true } : { node };
 }
 
 async function updateNode(id, updates) {
+  const _t0 = Date.now();
+  metrics.counter('update.calls');
+  try {
+    return await updateNodeImpl(id, updates);
+  } finally {
+    metrics.observe('update', Date.now() - _t0);
+  }
+}
+
+async function updateNodeImpl(id, updates) {
   const node = db.updateNode(id, updates);
   if (!node) return { error: 'not_found' };
 

@@ -18,6 +18,9 @@ let semanticMatchIds = null; // Set von Treffer-IDs der semantischen Suche (Ente
 let activeTab = 'edit';
 let md = null;
 let startNodeId = null;                    // Startknoten: immer hell
+let focusMode = false;                      // Fokus-Subgraph aktiv (statt Gesamtgraph)
+let focusRootId = null;                     // Wurzel des Fokus-Subgraphen
+let focusDepth = 1;                         // Hop-Tiefe im Fokus
 const recentlyAccessed = new Map();        // id → expiresAt (ms), 3s nach Zugriff
 const glowOverlays = new Map();            // id → HTMLElement (CSS-Glow-Overlay)
 
@@ -192,6 +195,9 @@ function activateSearchSelection() {
 
 function reloadGraph() {
   if (!graph) return;
+  // Im Fokus-Modus den Subgraphen neu laden (z.B. nach Live-Update), nicht den
+  // Gesamtgraphen — sonst würde der Fokus bei jeder Änderung verworfen.
+  if (focusMode && focusRootId) { enterFocus(focusRootId, focusDepth); return; }
   graph.graphData(getGraphData());
   graph.nodeColor(nodeColor);
 }
@@ -569,8 +575,8 @@ async function processWikilinks(node, content) {
   }
 }
 
-async function createNode(label, type, content, tags) {
-  const node = await api('POST', '/api/nodes', { label, type, content, tags });
+async function createNode(label, type, content, tags, summary) {
+  const node = await api('POST', '/api/nodes', { label, type, content, tags, summary });
   rawData.nodes.push(node);
   await processWikilinks(node, content);
   reloadGraph();
@@ -660,6 +666,7 @@ function initUI() {
     document.getElementById('new-label').value = '';
     document.getElementById('new-content').value = '';
     document.getElementById('new-tags').value = '';
+    document.getElementById('new-summary').value = '';
     document.getElementById('new-type').value = 'note';
     document.getElementById('modal-create').classList.remove('hidden');
     setTimeout(() => document.getElementById('new-label').focus(), 50);
@@ -672,10 +679,11 @@ function initUI() {
     if (!label) { showToast('Titel eingeben'); return; }
     const type = document.getElementById('new-type').value;
     const content = document.getElementById('new-content').value;
+    const summary = document.getElementById('new-summary').value.trim();
     const tags = document.getElementById('new-tags').value
       .split(',').map(t => t.trim()).filter(Boolean);
     closeCreateModal();
-    const node = await createNode(label, type, content, tags);
+    const node = await createNode(label, type, content, tags, summary || null);
     selectedNode = node;
     showPanel(node);
   });
@@ -736,6 +744,17 @@ function initUI() {
     });
   });
   document.getElementById('btn-import-confirm').addEventListener('click', doImport);
+
+  // Inbox / Auto-Capture
+  document.getElementById('btn-inbox').addEventListener('click', openInbox);
+  document.getElementById('btn-inbox-close').addEventListener('click', closeInbox);
+  document.getElementById('btn-inbox-done').addEventListener('click', closeInbox);
+  refreshInboxBadge();
+
+  // Statistik / Metriken
+  document.getElementById('btn-stats').addEventListener('click', openStats);
+  document.getElementById('btn-stats-close').addEventListener('click', closeStats);
+  document.getElementById('btn-stats-done').addEventListener('click', closeStats);
 
   // Maintenance dashboard
   document.getElementById('btn-maintenance').addEventListener('click', openMaintenance);
@@ -869,17 +888,147 @@ function hideContextMenu() {
   document.getElementById('ctx-menu').classList.add('hidden');
 }
 
-async function showNeighbors(id) {
+// Fokus-Subgraph: zeigt nur Wurzel + Nachbarn bis Tiefe `depth`. Tauscht die
+// Graph-Daten (nicht nur Dimmen) und blendet eine Steuer-Pill ein.
+async function enterFocus(id, depth = 1) {
   try {
-    const sub = await (await fetch(`/api/nodes/${id}/neighbors?depth=1`)).json();
-    if (!sub || !sub.nodes) { showToast('Keine Nachbarn'); return; }
-    semanticMatchIds = new Set(sub.nodes.map(n => n.id));
-    refreshGraph();
-    showToast(`${sub.count - 1} Nachbar(n) hervorgehoben`);
-    jumpToNode(sub.root.label);
+    const sub = await (await fetch(`/api/nodes/${id}/neighbors?depth=${depth}`)).json();
+    if (!sub || !sub.nodes) {
+      // Wurzel gelöscht o.ä. — sauber zum Gesamtgraphen zurück.
+      if (focusMode) exitFocus(); else showToast('Keine Nachbarn');
+      return;
+    }
+    focusMode = true; focusRootId = id; focusDepth = depth;
+    semanticMatchIds = null;
+    const nodes = sub.nodes.map(n => ({ ...n }));
+    const links = sub.links.map(l => ({ ...l }));
+    graph.graphData({ nodes, links });
+    graph.nodeColor(nodeColor);
+    showFocusPill(sub.root.label, sub.count - 1);
+    setTimeout(() => graph.zoomToFit(500, 60), 80);
   } catch {
-    showToast('Nachbarn nicht ladbar');
+    showToast('Subgraph nicht ladbar');
   }
+}
+
+function exitFocus() {
+  focusMode = false; focusRootId = null; focusDepth = 1;
+  document.getElementById('focus-pill')?.remove();
+  reloadGraph();
+  graph.zoomToFit(500, 80);
+}
+
+function showFocusPill(rootLabel, neighborCount) {
+  let pill = document.getElementById('focus-pill');
+  if (!pill) {
+    pill = document.createElement('div');
+    pill.id = 'focus-pill';
+    document.body.appendChild(pill);
+  }
+  const depthBtns = [1, 2, 3].map(d =>
+    `<button class="focus-depth${d === focusDepth ? ' active' : ''}" data-depth="${d}">${d}</button>`
+  ).join('');
+  pill.innerHTML =
+    `<span class="focus-label">Fokus: <strong>${escHtml(rootLabel)}</strong> · ${neighborCount} Nachbar(n)</span>` +
+    `<span class="focus-depth-group">Tiefe ${depthBtns}</span>` +
+    `<button id="focus-exit">Alle anzeigen</button>`;
+  pill.querySelectorAll('.focus-depth').forEach(b =>
+    b.addEventListener('click', () => enterFocus(focusRootId, parseInt(b.dataset.depth, 10))));
+  document.getElementById('focus-exit').addEventListener('click', exitFocus);
+}
+
+// Rückwärtskompatibler Alias (Kontextmenü „Nachbarn zeigen").
+function showNeighbors(id) { enterFocus(id, 1); }
+
+/* ── Statistik / Metriken ────────────────────────────── */
+function openStats() {
+  document.getElementById('modal-stats').classList.remove('hidden');
+  renderStats();
+}
+function closeStats() {
+  document.getElementById('modal-stats').classList.add('hidden');
+}
+
+// Einfache horizontale Balken (kein Chart-Lib) — label + Wert, breite ∝ Anteil.
+function barList(items, valueKey, labelKey) {
+  if (!items || !items.length) return '<span class="report-empty">– keine Daten –</span>';
+  const max = Math.max(...items.map(i => i[valueKey])) || 1;
+  return items.map(i => `
+    <div class="stat-bar-row">
+      <span class="stat-bar-label">${escHtml(String(i[labelKey]))}</span>
+      <span class="stat-bar-track"><span class="stat-bar-fill" style="width:${Math.max(2, (i[valueKey] / max) * 100)}%"></span></span>
+      <span class="stat-bar-val">${i[valueKey]}</span>
+    </div>`).join('');
+}
+
+async function renderStats() {
+  const body = document.getElementById('stats-body');
+  body.innerHTML = '<p class="hint">Lade…</p>';
+  let m;
+  try {
+    m = await (await fetch('/api/metrics')).json();
+  } catch {
+    body.innerHTML = '<p class="report-empty">Metriken nicht ladbar.</p>';
+    return;
+  }
+  const s = m.stats || {};
+  const h = m.histograms || {};
+  const c = m.counters || {};
+  const fmtH = (name) => {
+    const x = h[name];
+    if (!x) return '–';
+    return `${x.count}× · ø ${x.avgMs} ms · max ${x.maxMs} ms`;
+  };
+  const upMin = Math.floor((m.uptime || 0) / 60);
+
+  body.innerHTML = `
+    <div class="maint-totals">${s.totals?.nodes ?? 0} Knoten · ${s.totals?.links ?? 0} Kanten · Uptime ${upMin} min</div>
+
+    <details class="report-section" open>
+      <summary>Latenzen (seit Start)</summary>
+      <div class="report-list stat-latency">
+        <div><span>Recall/Suche</span><b>${fmtH('search')}</b></div>
+        <div><span>Embedding</span><b>${fmtH('embed')}</b></div>
+        <div><span>Anlegen</span><b>${fmtH('create')}</b></div>
+        <div><span>Update</span><b>${fmtH('update')}</b></div>
+      </div>
+    </details>
+
+    <details class="report-section" open>
+      <summary>Durchsatz (Counter)</summary>
+      <div class="report-list stat-latency">
+        <div><span>Suchen</span><b>${c['search.calls'] || 0}</b></div>
+        <div><span>Embeddings</span><b>${c['embed.calls'] || 0}</b></div>
+        <div><span>Anlegen</span><b>${c['create.calls'] || 0}</b></div>
+        <div><span>Updates</span><b>${c['update.calls'] || 0}</b></div>
+      </div>
+    </details>
+
+    <details class="report-section" open>
+      <summary>Knoten je Typ</summary>
+      <div class="report-list">${barList(s.byType, 'count', 'type')}</div>
+    </details>
+
+    <details class="report-section"${(s.topUsed && s.topUsed.length) ? ' open' : ''}>
+      <summary>Meistgenutzt (used_count)</summary>
+      <div class="report-list">${barList(s.topUsed, 'used_count', 'label')}</div>
+    </details>
+
+    <details class="report-section">
+      <summary>Meistgelesen (access_count)</summary>
+      <div class="report-list">${barList(s.topAccessed, 'access_count', 'label')}</div>
+    </details>
+
+    <details class="report-section">
+      <summary>Wachstum (Knoten/Tag, 30 Tage)</summary>
+      <div class="report-list">${barList(s.growth, 'count', 'day')}</div>
+    </details>
+
+    <details class="report-section">
+      <summary>Aktivitäts-Mix</summary>
+      <div class="report-list">${barList(s.actionMix, 'count', 'action')}</div>
+    </details>
+  `;
 }
 
 /* ── Maintenance Dashboard (B1) ──────────────────────── */
@@ -889,6 +1038,77 @@ function openMaintenance() {
 }
 function closeMaintenance() {
   document.getElementById('modal-maintenance').classList.add('hidden');
+}
+
+/* ── Inbox / Auto-Capture ────────────────────────────── */
+async function refreshInboxBadge() {
+  const badge = document.getElementById('inbox-badge');
+  if (!badge) return;
+  try {
+    const { count } = await (await fetch('/api/inbox')).json();
+    badge.textContent = count;
+    badge.classList.toggle('hidden', !count);
+  } catch { /* offline → Badge unverändert */ }
+}
+
+function openInbox() {
+  document.getElementById('modal-inbox').classList.remove('hidden');
+  renderInbox();
+}
+function closeInbox() {
+  document.getElementById('modal-inbox').classList.add('hidden');
+}
+
+async function renderInbox() {
+  const body = document.getElementById('inbox-body');
+  body.innerHTML = '<p class="hint">Lade…</p>';
+  let data;
+  try {
+    data = await (await fetch('/api/inbox')).json();
+  } catch {
+    body.innerHTML = '<p class="report-empty">Inbox nicht ladbar.</p>';
+    return;
+  }
+  if (!data.items || !data.items.length) {
+    body.innerHTML = '<p class="report-empty">Keine offenen Kandidaten. ✅</p>';
+    return;
+  }
+  body.innerHTML = data.items.map(it => `
+    <div class="inbox-row" data-id="${escAttr(it.id)}">
+      <div class="inbox-main">
+        <div class="inbox-label">${escHtml(it.label)} <span class="inbox-type">${escHtml(it.type)}</span></div>
+        <div class="inbox-preview">${escHtml(it.preview || it.summary || '')}</div>
+        ${it.source ? `<div class="inbox-src">${escHtml(it.source)}</div>` : ''}
+      </div>
+      <div class="inbox-actions">
+        <button class="inbox-accept" data-id="${escAttr(it.id)}">Übernehmen</button>
+        <button class="inbox-edit" data-label="${escAttr(it.label)}">Bearbeiten</button>
+        <button class="inbox-reject" data-id="${escAttr(it.id)}">Verwerfen</button>
+      </div>
+    </div>`).join('');
+
+  body.querySelectorAll('.inbox-accept').forEach(btn =>
+    btn.addEventListener('click', async () => {
+      try {
+        await api('POST', `/api/inbox/${btn.dataset.id}/accept`);
+        showToast('Übernommen');
+        btn.closest('.inbox-row').remove();
+        refreshInboxBadge();
+        if (!body.querySelector('.inbox-row')) renderInbox();
+      } catch (err) { showToast('Übernehmen fehlgeschlagen: ' + err.message); }
+    }));
+  body.querySelectorAll('.inbox-reject').forEach(btn =>
+    btn.addEventListener('click', async () => {
+      try {
+        await api('DELETE', `/api/nodes/${btn.dataset.id}`);
+        showToast('Verworfen');
+        btn.closest('.inbox-row').remove();
+        refreshInboxBadge();
+        if (!body.querySelector('.inbox-row')) renderInbox();
+      } catch (err) { showToast('Verwerfen fehlgeschlagen: ' + err.message); }
+    }));
+  body.querySelectorAll('.inbox-edit').forEach(btn =>
+    btn.addEventListener('click', () => { closeInbox(); jumpToNode(btn.dataset.label); }));
 }
 
 async function renderMaintenance() {
@@ -916,6 +1136,12 @@ async function renderMaintenance() {
     </details>`;
   };
   const li = (txt) => `<span class="item">${escHtml(txt)}</span>`;
+  // Knoten-Zeile mit „Öffnen"-Aktion (springt zum Knoten).
+  const nodeRow = (n, extra = '') => `<span class="item maint-node-row">
+    <span class="maint-node-label">${escHtml(n.label)}</span>
+    <span class="maint-actions">${extra}
+      <button class="maint-open" data-label="${escAttr(n.label)}">Öffnen</button>
+    </span></span>`;
 
   const sugHtml = (suggestions.suggestions || []).map((s, i) => `
     <div class="suggestion-row" data-i="${i}">
@@ -926,16 +1152,26 @@ async function renderMaintenance() {
       </span>
     </div>`).join('') || '<span class="report-empty">– keine offenen Vorschläge –</span>';
 
+  // „Ohne Summary": Inline-Eingabe direkt im Bericht.
+  const summaryRow = (n) => `<span class="item maint-summary-row">
+    <span class="maint-node-label">${escHtml(n.label)}</span>
+    <span class="maint-summary-edit">
+      <input type="text" class="maint-summary-input" data-id="${escAttr(n.id)}" placeholder="Summary in 1 Satz…">
+      <button class="maint-summary-save" data-id="${escAttr(n.id)}">✓</button>
+    </span></span>`;
+
   body.innerHTML = `
-    <div class="maint-totals">${t.nodes} Knoten · ${t.links} Kanten</div>
+    <div class="maint-totals">${t.nodes} Knoten · ${t.links} Kanten${report.reportNodeId ? ` · <button class="maint-open" data-label="Wartungsbericht">Bericht öffnen</button>` : ''}</div>
     <details class="report-section" open>
       <summary>Link-Vorschläge (${(suggestions.suggestions || []).length})</summary>
       <div class="report-list" id="maint-suggestions">${sugHtml}</div>
     </details>
-    ${section('Waisen (ohne Kanten)', report.orphans, n => li(n.label || n))}
-    ${section('Doppelte Labels', report.duplicateLabels, li)}
-    ${section('Tote Wikilinks', report.deadWikilinks, li)}
-    ${section('Nie zugegriffen', report.neverAccessed, li)}
+    ${section('Knoten ohne Summary', report.missingSummaries, summaryRow)}
+    ${section('Waisen (ohne Kanten)', report.orphans, n => nodeRow(n, `<button class="maint-connect" data-label="${escAttr(n.label)}">Verbinden</button>`))}
+    ${section(`Lange unverändert (>${report.staleDays || 90} Tage)`, report.staleNodes, n => nodeRow(n, `<span class="maint-stale-date">${escHtml(n.last || '')}</span>`))}
+    ${section('Doppelte Labels', report.duplicateLabels, d => li(`${d.label} (${d.count}×)`))}
+    ${section('Tote Wikilinks', report.deadWikilinks, w => li(`[[${w.missing}]] in „${w.node}"`))}
+    ${section('Nie zugegriffen', report.neverAccessed, n => nodeRow(n))}
     ${section('Läuft bald ab (TTL)', report.expiringSoon, n => li(`${n.label} · ${n.expires_at}`))}
   `;
 
@@ -943,6 +1179,34 @@ async function renderMaintenance() {
     btn.addEventListener('click', () => acceptSuggestion(btn)));
   body.querySelectorAll('.suggestion-actions .reject').forEach(btn =>
     btn.addEventListener('click', () => rejectSuggestion(btn)));
+  // „Öffnen" → zum Knoten springen (schließt das Modal).
+  body.querySelectorAll('.maint-open').forEach(btn =>
+    btn.addEventListener('click', () => { closeMaintenance(); jumpToNode(btn.dataset.label); }));
+  // „Verbinden" → Link-Modus mit dieser Waise als Quelle.
+  body.querySelectorAll('.maint-connect').forEach(btn =>
+    btn.addEventListener('click', () => {
+      const node = rawData.nodes.find(n => n.label === btn.dataset.label);
+      if (!node) return;
+      closeMaintenance();
+      linkSourceNode = node; showLinkBanner(node.label); refreshGraph();
+      showToast('Shift+Klick auf Zielknoten');
+    }));
+  // Inline-Summary speichern.
+  const saveSummary = async (id, value) => {
+    if (!value.trim()) { showToast('Summary leer'); return; }
+    try {
+      await api('PUT', `/api/nodes/${id}`, { summary: value.trim() });
+      showToast('Summary gespeichert');
+      renderMaintenance();
+    } catch (err) { showToast('Speichern fehlgeschlagen: ' + err.message); }
+  };
+  body.querySelectorAll('.maint-summary-save').forEach(btn =>
+    btn.addEventListener('click', () => {
+      const input = body.querySelector(`.maint-summary-input[data-id="${CSS.escape(btn.dataset.id)}"]`);
+      saveSummary(btn.dataset.id, input.value);
+    }));
+  body.querySelectorAll('.maint-summary-input').forEach(input =>
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveSummary(input.dataset.id, input.value); }));
 }
 
 async function acceptSuggestion(btn) {
@@ -1097,6 +1361,7 @@ function initLiveSync() {
     if (changedIds.size > 0 || newIds.size > 0) {
       flashNodes([...changedIds, ...newIds]);
       showLiveIndicator();
+      refreshInboxBadge(); // Auto-Capture kann neue Inbox-Kandidaten gebracht haben
     }
   });
 
@@ -1123,7 +1388,7 @@ setInterval(() => {
 
 function flashNodes(ids) {
   if (!graph || ids.length === 0) return;
-  const origColor = graph.nodeColor();
+
   graph.nodeColor(node => ids.includes(node.id) ? '#ffffff' : nodeColor(node));
   setTimeout(() => graph.nodeColor(nodeColor), 600);
 }

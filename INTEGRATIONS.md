@@ -25,8 +25,10 @@ Assumes Brain runs at `http://localhost:3000`. Replace the host as needed.
 claude mcp add --scope user --transport http brain http://localhost:3000/mcp
 ```
 
-Claude Code also supports an automatic session briefing via a SessionStart hook —
-see [`AI-AGENT-SETUP.md`](./AI-AGENT-SETUP.md) and [`CLAUDE.md`](./CLAUDE.md).
+Claude Code supports two automatic hooks — see [`AI-AGENT-SETUP.md`](./AI-AGENT-SETUP.md) and [`CLAUDE.md`](./CLAUDE.md):
+
+- **SessionStart hook** — loads a Brain briefing into context at the start of every session.
+- **SessionEnd / Auto-Capture hook** — extracts durable knowledge from the session transcript and queues it as Inbox candidates for review. See `examples/hooks/brain-capture.sh` and the [Auto-Capture section in README.md](./README.md#auto-capture).
 
 ## Claude Desktop (stdio)
 

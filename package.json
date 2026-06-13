@@ -1,6 +1,6 @@
 {
   "name": "pq-brain",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "description": "3D Personal Knowledge Graph",
   "main": "server.js",
   "scripts": {
@@ -10,7 +10,8 @@
     "eval": "node eval/run-eval.js",
     "eval:suggest": "node eval/suggest-gold.js",
     "backfill": "node backfill-embeddings.js",
-    "migrate": "node migrate-to-sqlite.js"
+    "migrate": "node migrate-to-sqlite.js",
+    "lint": "eslint ."
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
@@ -22,5 +23,9 @@
     "sqlite-vec": "^0.1.9",
     "ws": "^8.21.0",
     "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.4.1"
   }
 }

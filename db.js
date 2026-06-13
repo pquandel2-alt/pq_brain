@@ -188,6 +188,24 @@ db.exec(`
   )
 `);
 
+// Inbox-Review-Entscheidungen als gelabelte Trainingsdaten (für späteres
+// Capture-Fine-Tune). Voller Knoten-Snapshot, weil abgelehnte/abgelaufene
+// Knoten gelöscht werden — der Kandidatentext muss danach erhalten bleiben.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS inbox_decisions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    node_id    TEXT NOT NULL,
+    label      TEXT NOT NULL,
+    type       TEXT,
+    content    TEXT,
+    summary    TEXT,
+    tags       TEXT,
+    source     TEXT,
+    decision   TEXT NOT NULL CHECK(decision IN ('accepted','rejected','expired')),
+    decided_at TEXT NOT NULL
+  )
+`);
+
 // ── Mapper ────────────────────────────────────────────────────────────
 function tagsFor(ids) {
   // Map<node_id, string[]> für eine Knotenmenge
@@ -358,6 +376,25 @@ function recordHistory(row, op) {
         row.summary ?? null, row.source ?? null, row.ttl ?? null, row.expires_at ?? null);
 }
 
+// ── Inbox-Entscheidungen (Trainingsdaten) ─────────────────────────────
+// Snapshot eines Inbox-Kandidaten + Review-Entscheidung festhalten.
+// tags ohne 'inbox' speichern — das Tag ist Workflow-Detail, kein Inhalt.
+function logInboxDecision(row, tags, decision) {
+  db.prepare(
+    `INSERT INTO inbox_decisions (node_id, label, type, content, summary, tags, source, decision, decided_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(row.id, row.label, row.type, row.content, row.summary ?? null,
+        JSON.stringify(tags.filter(t => t !== 'inbox')), row.source ?? null,
+        decision, new Date().toISOString());
+}
+
+// Entscheidungen lesen (neueste zuerst) — Export für späteres Fine-Tune.
+function getInboxDecisions({ limit = 500 } = {}) {
+  return db.prepare(
+    'SELECT * FROM inbox_decisions ORDER BY decided_at DESC, id DESC LIMIT ?'
+  ).all(limit).map(r => ({ ...r, tags: JSON.parse(r.tags || '[]') }));
+}
+
 const createNode = db.transaction(({ label, type = 'note', content = '', tags = [], summary = null, source = null, ttl = null }) => {
   const id = randomUUID();
   const created = new Date().toISOString();
@@ -391,6 +428,15 @@ const updateNode = db.transaction((id, updates) => {
     ttl,
     expires_at,
   };
+  // Inbox-Review „angenommen": Tag-Update entfernt das inbox-Tag → als
+  // Trainings-Entscheidung loggen (deckt HTTP-Accept, MCP-Accept und PUT ab).
+  if (updates.tags !== undefined) {
+    const oldTags = currentTags(id);
+    if (oldTags.includes('inbox') && !updates.tags.includes('inbox')) {
+      logInboxDecision(existing, oldTags, 'accepted');
+    }
+  }
+
   // Vorherigen Stand versionieren, dann Version hochzählen.
   recordHistory(existing, 'update');
   const version = existing.version + 1;
@@ -408,6 +454,10 @@ const updateNode = db.transaction((id, updates) => {
 const deleteNode = db.transaction((id) => {
   const row = db.prepare('SELECT * FROM nodes WHERE id = ?').get(id);
   if (!row) return null;
+  // Inbox-Review „verworfen": Löschen eines inbox-Kandidaten ist die
+  // Ablehnungs-Entscheidung (GUI-Verwerfen + brain_delete_node).
+  const rowTags = currentTags(id);
+  if (rowTags.includes('inbox')) logInboxDecision(row, rowTags, 'rejected');
   // Stand für mögliche Wiederherstellung (undelete) sichern.
   recordHistory(row, 'delete');
   if (vecEnabled) db.prepare('DELETE FROM vec_nodes WHERE node_id = ?').run(id);
@@ -460,10 +510,17 @@ function getNodeFull(id) {
 // Abgelaufene Ephemeral-Knoten löschen. Gibt Anzahl zurück.
 // vec_nodes hat kein ON DELETE CASCADE → explizit mitlöschen.
 const deleteExpired = db.transaction(() => {
-  const expired = db.prepare(
-    "SELECT id FROM nodes WHERE expires_at IS NOT NULL AND julianday(expires_at) < julianday('now')"
-  ).all().map(r => r.id);
-  if (expired.length === 0) return 0;
+  const expiredRows = db.prepare(
+    "SELECT * FROM nodes WHERE expires_at IS NOT NULL AND julianday(expires_at) < julianday('now')"
+  ).all();
+  if (expiredRows.length === 0) return 0;
+  const expired = expiredRows.map(r => r.id);
+  // Nie reviewte Inbox-Kandidaten: als 'expired' loggen (schwaches Negativ-Signal,
+  // bewusst getrennt von explizitem 'rejected').
+  for (const row of expiredRows) {
+    const rowTags = currentTags(row.id);
+    if (rowTags.includes('inbox')) logInboxDecision(row, rowTags, 'expired');
+  }
   if (vecEnabled) {
     const ph = expired.map(() => '?').join(',');
     db.prepare(`DELETE FROM vec_nodes WHERE node_id IN (${ph})`).run(...expired);
@@ -496,6 +553,33 @@ function pruneLog(days = 7) {
   return db.prepare(
     `DELETE FROM action_log WHERE julianday(ts) < julianday('now', ?)`
   ).run(`-${days} days`).changes;
+}
+
+// Verhaltens-/Bestandsstatistik für /api/metrics (Dashboard).
+// Rein deterministische SQL-Aggregate — günstig, kein Embedding.
+function getStats({ growthDays = 30, logDays = 7, top = 10 } = {}) {
+  const live = "(expires_at IS NULL OR julianday(expires_at) > julianday('now'))";
+  const topUsed = db.prepare(
+    `SELECT label, used_count, access_count FROM nodes WHERE ${live} AND used_count > 0
+     ORDER BY used_count DESC, access_count DESC LIMIT ?`
+  ).all(top);
+  const topAccessed = db.prepare(
+    `SELECT label, access_count FROM nodes WHERE ${live} AND access_count > 0
+     ORDER BY access_count DESC LIMIT ?`
+  ).all(top);
+  const byType = db.prepare(
+    `SELECT type, COUNT(*) AS count FROM nodes WHERE ${live} GROUP BY type ORDER BY count DESC`
+  ).all();
+  const growth = db.prepare(
+    `SELECT date(created) AS day, COUNT(*) AS count FROM nodes
+     WHERE julianday(created) > julianday('now', ?) GROUP BY day ORDER BY day`
+  ).all(`-${growthDays} days`);
+  const actionMix = db.prepare(
+    `SELECT action, COUNT(*) AS count FROM action_log
+     WHERE julianday(ts) > julianday('now', ?) GROUP BY action ORDER BY count DESC`
+  ).all(`-${logDays} days`);
+  const totals = { nodes: countNodes(), links: db.prepare('SELECT COUNT(*) AS c FROM links').get().c };
+  return { totals, byType, topUsed, topAccessed, growth, actionMix };
 }
 
 // Zugriffs-Zähler (für „gezielten Recall" — search/tags/Einzelknoten).
@@ -553,11 +637,16 @@ function stripCode(content) {
 }
 
 // Graph-Hygiene-Report (read-only).
+// Stale-Schwelle (Tage) — Knoten, die länger nicht aktualisiert wurden.
+// Hier zentral, damit Health-Report und Gärtner dieselbe Definition teilen.
+const HEALTH_STALE_DAYS = 90;
+
 function getHealthReport() {
   const brain = getBrain();
   const linked = new Set();
   for (const l of brain.links) { linked.add(l.source); linked.add(l.target); }
-  const orphans = brain.nodes.filter(n => !linked.has(n.id)).map(n => n.label);
+  // id+label-Objekte → GUI/Agenten können direkt zum Knoten springen / agieren.
+  const orphans = brain.nodes.filter(n => !linked.has(n.id)).map(n => ({ id: n.id, label: n.label }));
 
   const counts = {};
   for (const n of brain.nodes) counts[n.label] = (counts[n.label] || 0) + 1;
@@ -572,11 +661,25 @@ function getHealthReport() {
     }
   }
 
-  const neverAccessed = db.prepare('SELECT label FROM nodes WHERE access_count = 0').all().map(r => r.label);
+  const live = "(expires_at IS NULL OR julianday(expires_at) > julianday('now'))";
+  const neverAccessed = db.prepare(`SELECT id, label FROM nodes WHERE access_count = 0 AND ${live}`).all();
+
+  // Wandert vom Gärtner hierher → eine Quelle für GUI, MCP und Gärtner.
+  const missingSummaries = db.prepare(
+    `SELECT id, label FROM nodes WHERE (summary IS NULL OR TRIM(summary) = '') AND ${live} ORDER BY label`
+  ).all();
+
+  const staleNodes = db.prepare(
+    `SELECT id, label, COALESCE(updated_at, created) AS last FROM nodes
+     WHERE julianday(COALESCE(updated_at, created)) < julianday('now', ?) AND ${live}
+     ORDER BY last`
+  ).all(`-${HEALTH_STALE_DAYS} days`).map(r => ({ id: r.id, label: r.label, last: (r.last || '').slice(0, 10) }));
 
   const expiringSoon = db.prepare(
     "SELECT label, expires_at FROM nodes WHERE expires_at IS NOT NULL AND julianday(expires_at) > julianday('now') AND julianday(expires_at) < julianday('now', '+24 hours') ORDER BY expires_at"
   ).all();
+
+  const reportNode = db.prepare('SELECT id FROM nodes WHERE label = ?').get('Wartungsbericht');
 
   return {
     totals: { nodes: brain.nodes.length, links: brain.links.length },
@@ -584,7 +687,11 @@ function getHealthReport() {
     duplicateLabels,
     deadWikilinks,
     neverAccessed,
+    missingSummaries,
+    staleNodes,
     expiringSoon,
+    reportNodeId: reportNode ? reportNode.id : null,
+    staleDays: HEALTH_STALE_DAYS,
   };
 }
 
@@ -837,9 +944,11 @@ module.exports = {
   getHealthReport,
   stripCode,
   deleteExpired,
+  getInboxDecisions,
   logAction,
   getRecentLog,
   pruneLog,
+  getStats,
   // Semantik
   upsertEmbedding,
   deleteEmbedding,

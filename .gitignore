@@ -11,3 +11,4 @@ data/logs/
 data/models/
 __pycache__/
 *.pyc
+eval/results/

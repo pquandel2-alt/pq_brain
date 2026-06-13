@@ -102,6 +102,14 @@ const spec = {
         },
       },
     },
+    '/api/metrics': {
+      get: {
+        tags: ['meta'], operationId: 'getMetrics',
+        summary: 'Laufzeit-Metriken (Latenzen, Durchsatz) + Bestands-/Verhaltensstatistik',
+        description: 'Prozesslokale Counter/Latenz-Histogramme (recall/search/create/update/embed) plus DB-Statistik (Top-Knoten, Typverteilung, Wachstum, Aktionsmix). Counter werden bei Neustart zurückgesetzt.',
+        responses: { 200: { description: 'Metriken', content: { 'application/json': { schema: { type: 'object' } } } }, 500: errorResponse('Fehler') },
+      },
+    },
     '/api/brain/suggest-links': {
       get: {
         tags: ['maintenance'], operationId: 'suggestLinks', summary: 'Link-Vorschläge',
@@ -133,6 +141,29 @@ const spec = {
       post: {
         tags: ['maintenance'], operationId: 'runMaintenance', summary: 'Gärtner-Lauf anstoßen',
         responses: { 200: { description: 'Ergebnis', content: { 'application/json': { schema: { type: 'object' } } } }, 500: errorResponse('Fehler') },
+      },
+    },
+    '/api/inbox': {
+      get: {
+        tags: ['maintenance'], operationId: 'listInbox',
+        summary: 'Auto-Capture-Kandidaten (Inbox) auflisten',
+        description: 'Aus Sessions extrahierte Knoten mit Tag `inbox`, die auf Review warten (inkl. Ablaufdatum).',
+        responses: { 200: { description: 'Inbox', content: { 'application/json': { schema: { type: 'object' } } } }, 500: errorResponse('Fehler') },
+      },
+      post: {
+        tags: ['maintenance'], operationId: 'inboxIntake',
+        summary: 'Kandidaten in die Inbox aufnehmen (Auto-Capture)',
+        description: 'Nimmt aus einer Session extrahierte Knoten als Inbox-Kandidaten auf (Tag `inbox`, TTL, Dedup aktiv). Max 10 Knoten pro Aufruf.',
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['nodes'], properties: { session_id: { type: 'string' }, nodes: { type: 'array', items: { $ref: '#/components/schemas/NodeCreate' } } } } } } },
+        responses: { 200: { description: 'Aufnahme-Ergebnis (Teilerfolge pro Eintrag)', content: { 'application/json': { schema: { type: 'object' } } } }, 400: errorResponse('Validierung') },
+      },
+    },
+    '/api/inbox/{id}/accept': {
+      parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+      post: {
+        tags: ['maintenance'], operationId: 'acceptInbox',
+        summary: 'Inbox-Kandidat annehmen (Tag + TTL entfernen)',
+        responses: { 200: { description: 'Übernommener Knoten', content: { 'application/json': { schema: { $ref: '#/components/schemas/FullNode' } } } }, 400: errorResponse('Validierung'), 404: errorResponse('nicht gefunden') },
       },
     },
     '/api/nodes': {

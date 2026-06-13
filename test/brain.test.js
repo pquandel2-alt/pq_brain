@@ -6,16 +6,15 @@
  * Kein Embedding-Modell — Vektorfunktionen werden via Stub getestet.
  */
 
-const { test, describe, before, after } = require('node:test');
+const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
-const path = require('path');
 
 // Temp-DB vor dem Laden von db.js setzen.
 process.env.BRAIN_DB = ':memory:';
 
 const db = require('../db');
 const retrieval = require('../retrieval');
-const { rrf, previewText, rerankText, frecencyBoost } = retrieval;
+const { rrf, previewText, frecencyBoost } = retrieval;
 const operations = require('../operations');
 const { embeddingText, resolveWikilinks } = operations;
 const gardener = require('../gardener');
@@ -98,7 +97,7 @@ describe('db: TTL-Expiry + vec-Cleanup (C3)', () => {
   });
 
   test('deleteExpired lässt nicht-abgelaufene Knoten in Ruhe', () => {
-    const n = db.createNode({ label: 'Nicht ephemeral', content: 'bleibt' });
+    db.createNode({ label: 'Nicht ephemeral', content: 'bleibt' });
     db.deleteExpired();
     assert.ok(db.findByLabel('Nicht ephemeral'));
     db.deleteNode(db.findByLabel('Nicht ephemeral').id);
@@ -226,6 +225,19 @@ describe('db: stripCode', () => {
     const n = db.createNode({ label: 'Doku', content: 'Beispiel: `[[Wikilinks]]` und ```\n[[NichtDa]]\n```' });
     const report = db.getHealthReport();
     assert.ok(!report.deadWikilinks.some(w => w.node === 'Doku'));
+    db.deleteNode(n.id);
+  });
+
+  test('Health-Report liefert id+label-Objekte und neue Sektionen', () => {
+    const n = db.createNode({ label: 'GanzOhneSummary', content: 'rumpf' });
+    const report = db.getHealthReport();
+    // orphans/neverAccessed/missingSummaries sind {id,label}-Objekte
+    const orphan = report.orphans.find(o => o.label === 'GanzOhneSummary');
+    assert.ok(orphan && orphan.id, 'orphan trägt id+label');
+    assert.ok(report.missingSummaries.some(m => m.label === 'GanzOhneSummary'));
+    assert.ok(Array.isArray(report.staleNodes));
+    assert.equal(typeof report.staleDays, 'number');
+    assert.ok('reportNodeId' in report);
     db.deleteNode(n.id);
   });
 });

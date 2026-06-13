@@ -1,0 +1,31 @@
+# Brain — Cursor Rules
+
+You have access to a persistent knowledge graph called **Brain** running at `http://localhost:3000`.
+
+## Every session
+
+1. **Read Brain first** — before answering anything about this user's projects or preferences:
+   ```
+   GET http://localhost:3000/api/brain?smart=true&depth=1&fields=label,type,tags,summary
+   ```
+   Or use the `brain_recall` MCP tool if connected.
+
+2. **Check for a project node** — if none exists for the current directory, create one:
+   ```
+   POST http://localhost:3000/api/nodes
+   {"label":"<project-name>","type":"project","summary":"<one sentence>","tags":[...]}
+   ```
+
+## While working
+
+- **Write back immediately** — decisions, patterns, new facts → update Brain
+- **Always include `summary`** in every node (1 sentence max 120 chars)
+- **Always link after creating** — after `brain_create_node`, check `brain_suggest_links` and apply results with `brain_link`
+- Brain is the **single source of truth** — ignore stale `.md` memory files
+
+## MCP (if connected)
+
+Brain is available as MCP server `brain` at `http://localhost:3000/mcp`.
+Key tools: `brain_recall`, `brain_get`, `brain_create_node`, `brain_update_node`, `brain_link`, `brain_suggest_links`.
+
+Full instructions: see `AGENTS.md` in this repository.

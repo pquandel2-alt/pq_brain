@@ -898,3 +898,117 @@ html, body {
   .modal-box { border-radius: 10px 10px 0 0; margin-top: auto; max-height: 85vh; }
   .modal { align-items: flex-end; padding: 0; }
 }
+
+/* ── Inbox-Badge (Toolbar) ───────────────────────────── */
+.icon-btn { position: relative; }
+.badge {
+  position: absolute;
+  top: -4px; right: -4px;
+  min-width: 16px; height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* ── Fokus-Subgraph-Pill ─────────────────────────────── */
+#focus-pill {
+  position: fixed;
+  top: 110px; left: 50%;
+  transform: translateX(-50%);
+  display: flex; align-items: center; gap: 12px;
+  background: var(--surface); backdrop-filter: blur(8px);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 12px; color: var(--text);
+  z-index: 140;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+}
+#focus-pill .focus-label strong { color: var(--accent); }
+#focus-pill .focus-depth-group { display: flex; align-items: center; gap: 4px; color: var(--text-muted); }
+#focus-pill .focus-depth {
+  width: 20px; height: 20px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: none; color: var(--text-muted); cursor: pointer; font-size: 11px;
+}
+#focus-pill .focus-depth.active { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
+#focus-pill #focus-exit {
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: none; color: var(--text); cursor: pointer; font-size: 11px; padding: 3px 10px;
+}
+#focus-pill #focus-exit:hover { background: var(--surface-hover); }
+
+/* ── Wartungs-View: Knoten-Zeilen mit Aktionen ───────── */
+.maint-node-row, .maint-summary-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 3px 0; font-size: 12px; color: var(--text-muted);
+}
+.maint-node-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.maint-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.maint-stale-date { color: var(--text-subtle); font-size: 11px; }
+.maint-open, .maint-connect, .maint-summary-save {
+  background: none; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--text-muted); cursor: pointer; font-size: 11px; font-family: inherit;
+  padding: 2px 8px; transition: all 0.12s;
+}
+.maint-open:hover { background: var(--surface-hover); color: var(--text); border-color: var(--border-strong); }
+.maint-connect:hover { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
+.maint-summary-edit { display: flex; gap: 4px; flex: 1; max-width: 60%; }
+.maint-summary-input {
+  flex: 1; min-width: 0;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--text); font-size: 11px; font-family: inherit; padding: 2px 6px;
+}
+.maint-summary-input:focus { border-color: var(--accent); outline: none; }
+.maint-summary-save:hover { background: rgba(52,211,153,0.10); color: var(--c-note); border-color: rgba(52,211,153,0.3); }
+.maint-totals .maint-open { margin-left: 8px; }
+
+/* ── Inbox-Modal ─────────────────────────────────────── */
+#inbox-body { max-height: 50vh; overflow-y: auto; }
+.inbox-row {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border);
+}
+.inbox-row:last-child { border-bottom: none; }
+.inbox-main { flex: 1; min-width: 0; }
+.inbox-label { font-size: 13px; color: var(--text); font-weight: 500; }
+.inbox-type {
+  font-size: 10px; color: var(--text-subtle); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 0 5px; margin-left: 6px;
+}
+.inbox-preview { font-size: 12px; color: var(--text-muted); margin-top: 3px; }
+.inbox-src { font-size: 10px; color: var(--text-subtle); margin-top: 3px; font-family: monospace; }
+.inbox-actions { display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; }
+.inbox-actions button {
+  background: none; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--text-muted); cursor: pointer; font-size: 11px; font-family: inherit;
+  padding: 3px 10px; transition: all 0.12s; white-space: nowrap;
+}
+.inbox-accept:hover { background: rgba(52,211,153,0.10); color: var(--c-note); border-color: rgba(52,211,153,0.3); }
+.inbox-edit:hover { background: var(--surface-hover); color: var(--text); }
+.inbox-reject:hover { background: rgba(248,113,113,0.10); color: var(--c-danger); border-color: rgba(248,113,113,0.3); }
+
+/* ── Statistik-Modal: Balken + Latenz-Zeilen ─────────── */
+.stat-latency div {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 12px; color: var(--text-muted); padding: 2px 0;
+}
+.stat-latency div b { color: var(--text); font-weight: 500; }
+.stat-bar-row {
+  display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 2px 0;
+}
+.stat-bar-label {
+  flex: 0 0 38%; color: var(--text-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.stat-bar-track {
+  flex: 1; height: 8px; background: var(--surface);
+  border-radius: 999px; overflow: hidden;
+}
+.stat-bar-fill { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+.stat-bar-val { flex: 0 0 auto; color: var(--text); font-variant-numeric: tabular-nums; min-width: 28px; text-align: right; }

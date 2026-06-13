@@ -9,6 +9,7 @@ const db = require('./db');
 const config = require('./config');
 const { embed } = require('./embeddings');
 const reranker = require('./reranker');
+const metrics = require('./metrics');
 
 // Token-SCHÄTZUNG (keine exakte Messung): Zeichen / charsPerToken. Default aus config
 // (4), per Request kalibrierbar. Clients sollten usedTokensEst als Näherung behandeln.
@@ -83,6 +84,17 @@ function frecencyBoost(accessCount, accessedAt, usedCount) {
  * frecency: A2-Boost an/aus (Default an; `false` nur fürs Eval-Harness).
  */
 async function rankedIds({ q, mode = 'hybrid', limit = 10, frecency = true }) {
+  const _t0 = Date.now();
+  metrics.counter('search.calls');
+  metrics.counter(`search.mode.${mode}`);
+  try {
+    return await rankedIdsImpl({ q, mode, limit, frecency });
+  } finally {
+    metrics.observe('search', Date.now() - _t0);
+  }
+}
+
+async function rankedIdsImpl({ q, mode = 'hybrid', limit = 10, frecency = true }) {
   const lim = Math.max(1, Math.min(parseInt(limit, 10) || 10, 100));
 
   if (mode === 'keyword' || !db.vecEnabled && mode === 'semantic') {
@@ -303,6 +315,16 @@ function buildBriefing({ budget = 1500, charsPerToken } = {}) {
   const g = db.getBrain();
   const stats = { nodes: g.nodes.length, links: g.links.length };
 
+  // Auto-Capture: offene Inbox-Kandidaten beim Session-Start sichtbar machen.
+  let inboxCount = 0;
+  try {
+    inboxCount = db.db.prepare(
+      `SELECT COUNT(DISTINCT n.id) AS c FROM nodes n JOIN node_tags t ON t.node_id = n.id
+       WHERE t.tag = 'inbox' COLLATE NOCASE
+         AND (n.expires_at IS NULL OR julianday(n.expires_at) > julianday('now'))`
+    ).get().c;
+  } catch { /* Tabelle/Index optional */ }
+
   const startId = db.getStartNodeId();
   let start = null;
   let neighborsOut = [];
@@ -319,13 +341,16 @@ function buildBriefing({ budget = 1500, charsPerToken } = {}) {
       if (nb) neighborsOut = nb.nodes.filter(n => n.id !== startId).slice(0, BRIEFING_MAX_NEIGHBORS);
     }
   }
-  return { generatedAt: new Date().toISOString(), stats, start, neighbors: neighborsOut };
+  return { generatedAt: new Date().toISOString(), stats, inboxCount, start, neighbors: neighborsOut };
 }
 
 // Markdown-Rendering des Briefings — generisch formuliert, kein KI-spezifischer Ton.
 function briefingMarkdown(b) {
   const lines = ['# Brain Briefing', ''];
   lines.push(`Knowledge graph: ${b.stats.nodes} nodes, ${b.stats.links} links (generated ${b.generatedAt}).`);
+  if (b.inboxCount > 0) {
+    lines.push('', `📥 **${b.inboxCount} Inbox-Kandidat${b.inboxCount === 1 ? '' : 'en'} warten auf Review** — brain_inbox (action="list").`);
+  }
   lines.push('');
   if (!b.start) {
     lines.push('No start node configured yet. Set BRAIN_START_NODE, tag a node `start`,');

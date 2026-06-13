@@ -1,0 +1,59 @@
+# Brain + Ollama — vollständig lokales Setup ohne Cloud-Abhängigkeit.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.ollama.yml up -d
+#
+# Beim ersten Start wird das gewählte Modell automatisch gepullt.
+# Modell wählen: BRAIN_CAPTURE_OLLAMA_MODEL=llama3.2:3b docker compose ... up -d
+# Default: qwen2.5:3b (2 GB, schnell, gute JSON-Ausgabe)
+
+services:
+  brain:
+    environment:
+      - BRAIN_CAPTURE_BACKEND=ollama
+      - OLLAMA_URL=http://ollama:11434
+      - BRAIN_CAPTURE_OLLAMA_MODEL=${BRAIN_CAPTURE_OLLAMA_MODEL:-qwen2.5:3b}
+      - BRAIN_CAPTURE_OLLAMA_TIMEOUT=1800
+    depends_on:
+      ollama-init:
+        condition: service_completed_successfully
+
+  # Ollama API-Server
+  ollama:
+    image: ollama/ollama:latest
+    container_name: pq-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:11434/api/version"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+
+  # Einmaliger Init-Container: pullt das gewählte Modell
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: pq-ollama-init
+    restart: "no"
+    volumes:
+      - ollama-data:/root/.ollama
+    environment:
+      - OLLAMA_MODEL=${BRAIN_CAPTURE_OLLAMA_MODEL:-qwen2.5:3b}
+    entrypoint: >
+      sh -c "
+        ollama serve &
+        OLLAMA_PID=$$!
+        echo 'Waiting for Ollama...'
+        until curl -sf http://localhost:11434/api/version >/dev/null 2>&1; do sleep 2; done
+        echo 'Pulling model: '$$OLLAMA_MODEL
+        ollama pull $$OLLAMA_MODEL
+        echo 'Model ready.'
+        kill $$OLLAMA_PID
+      "
+    depends_on:
+      - ollama
+
+volumes:
+  ollama-data:

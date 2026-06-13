@@ -1,288 +1,205 @@
-# Setup für KI-Agenten
+# AI Agent Setup
 
-Du bist ein KI-Agent. Dieser Repo ist dein Memory-System. Hier ist wie es funktioniert.
+You are an AI agent. This repository is your memory system. Here is how it works.
 
-> **Client-spezifisches Andocken** (Claude Code, ChatGPT, OpenAI SDK, LangChain,
-> Gemini/Cursor) steht in [`INTEGRATIONS.md`](./INTEGRATIONS.md). Dieses Dokument
-> beschreibt den generischen REST-Workflow, der mit jeder KI funktioniert.
+> **Client-specific setup** (Claude Code, ChatGPT, OpenAI SDK, LangChain, Gemini, Cursor) is in [`INTEGRATIONS.md`](./INTEGRATIONS.md). This document describes the generic REST workflow that works with any AI.
 
-## 1. Einmalig: Brain starten
+## 1. Install Brain (one-time)
 
 ```bash
 git clone https://github.com/pquandel2-alt/pq_brain.git
 cd pq_brain
-npm install
-node server.js                 # Server läuft auf http://localhost:3000
+./install.sh          # Ubuntu/Debian: installs Node.js, deps, optional systemd service
+# or:
+docker compose up -d  # any OS, persistent volume
 ```
 
-Speicher ist SQLite (`data/brain.db`) — wird beim ersten Start automatisch angelegt,
-keine Beispieldatei nötig. Konfiguration ist optional: `cp .env.example .env` und
-anpassen (alle Werte haben Defaults). Alternativ per Container: `docker compose up -d`.
-
----
-
-## 2. Zu Beginn jeder Konversation: Brain lesen
-
-**Empfohlen** (kompakt, token-schonend): das Briefing holen — Startknoten +
-verlinkter Kontext + Eckdaten in einem Aufruf:
+Brain runs at `http://localhost:3000`. Verify:
 
 ```bash
-curl -s http://localhost:3000/api/briefing            # Markdown
-curl -s "http://localhost:3000/api/recall?q=deine+Frage"   # gezielt nachladen
+curl -s http://localhost:3000/api/health
 ```
 
-Den **ganzen** Graphen (token-intensiv, nur bei Bedarf):
-
+**Claude Code users:** also run:
 ```bash
-curl -s http://localhost:3000/api/brain
+./install-hooks-claude.sh   # installs hooks into ~/.claude/settings.json
+claude mcp add --scope user --transport http brain http://localhost:3000/mcp
 ```
 
-**Du erhältst:**
+**Other MCP clients (Cursor, Windsurf, etc.):** add to your MCP config:
 ```json
-{
-  "nodes": [
-    {
-      "id": "...",
-      "label": "...",
-      "type": "memory|project|idea|note|reference",
-      "content": "# Markdown\n\nDas ist was du liest.",
-      "tags": [...]
-    },
-    ...
-  ],
-  "links": [
-    { "source": "...", "target": "...", "label": "..." },
-    ...
-  ]
-}
+{ "mcpServers": { "brain": { "url": "http://localhost:3000/mcp" } } }
 ```
 
-**Du machst:**
-1. Lese das gesamte `content` Feld von jedem Node als Kontext
-2. Verwende die Links um zu verstehen, wie Konzepte zusammenhängen
-3. Start-Knoten zeigt dir die 6 Standard-Kategorien
-
 ---
 
-## 3. Die 6 Standard-Knoten
-
-| Label | Typ | Inhalt |
-|-------|-----|--------|
-| `Start` | memory | Einstiegspunkt, erklärt wie Brain funktioniert |
-| `User Profil` | memory | Wer ist der Nutzer? Umgebung? Erfahrung? |
-| `Feedback` | memory | Was funktioniert? Was vermeiden? Bestätigte Ansätze? |
-| `Projekte` | project | Aktive Projekte, Ziele, Versionen, Status |
-| `Ideen` | idea | Unvalidierte Ideen, zukünftige Arbeit |
-| `Notizen` | note | Technische Muster, Architektur-Entscheidungen |
-| `Referenzen` | reference | Externe Pointers (URLs, APIs, Tooling) |
-
-Jedes dieser Knoten ist voll mit Markdown. **Lese alle.** Das ist dein Kontext.
-
----
-
-## 4. Während du arbeitest: verwende Brain als Kontext
-
-Wenn Brain sagt:
-- "User bevorzugt Deutsch" → antworte auf Deutsch
-- "Token-Disziplin bei großen Dateien" → nutze Grep + Window-Read statt ganze Datei
-- "Brain ist primäre Wissensquelle" → ignoriere alte .md-Dateien
-- "Projekte haben bestimmte Versionen" → nutze diese Versionen
-
-Brain ist die **Single Source of Truth**. Alles andere ist veraltet.
-
----
-
-## 5. Wenn sich was ändert: schreib zurück
-
-Drei Fälle:
-
-### Fall 1: Neue Tatsache über den Nutzer/Projekt
-
-Beispiel: du lernst, dass Node 20 installiert ist (aber Brain sagt Node 18)
+## 2. At the start of every session: read Brain
 
 ```bash
-curl -X PUT http://localhost:3000/api/nodes/user-profil \
-  -H "Content-Type: application/json" \
-  -d '{"content": "... aktualisiertes Markdown ..."}'
+curl -s "http://localhost:3000/api/recall?q=<topic>&budget=2000"   # targeted
+curl -s http://localhost:3000/api/briefing                          # full overview
 ```
 
-### Fall 2: Neues Feedback / bestätigter Ansatz
-
-Beispiel: User sagt "ja genau, halte Knoten klein"
+You get ranked node summaries with IDs. Drill down with:
 
 ```bash
-curl -X PUT http://localhost:3000/api/nodes/feedback \
-  -H "Content-Type: application/json" \
-  -d '{"content": "## Altes Feedback\n...\n\n## Knoten klein halten\n\n**Rule:** Max 5 Punkte pro Standard-Knoten, sub-Knoten für Details.\n\n**Why:** User bestätigt, übersichtlich bleibt schneller zu lesen.\n\n**Applies to:** Alle zukünftigen Memory-Updates."}'
+curl -s http://localhost:3000/api/nodes/<id>
 ```
 
-### Fall 3: Neue Idee / Sub-Projekt
+---
 
-Neu-Knoten sind rare. Nur wenn es wirklich ein separates Konzept ist:
+## 3. The 6 default nodes
+
+| Label | Type | Content |
+|-------|------|---------|
+| `AI – Start` | memory | Entry point, explains graph structure |
+| `User Profile` | memory | Who is the user? Environment, experience, preferences |
+| `Feedback` | memory | What works? What to avoid? Confirmed approaches |
+| `Projects` | project | Active projects, goals, versions, status |
+| `Ideas` | idea | Unvalidated ideas, future work |
+| `Notes` | note | Technical patterns, architecture decisions |
+
+Read all of them. This is your context.
+
+---
+
+## 4. During the session: use Brain as context
+
+If Brain says:
+- "User prefers TypeScript" → use TypeScript
+- "Use token discipline" → grep instead of reading whole files
+- "Brain is the primary knowledge source" → ignore stale `.md` files
+
+Brain is the **single source of truth**.
+
+---
+
+## 5. When something changes: write back
+
+### New fact about the user or project
+
+```bash
+curl -X PUT http://localhost:3000/api/nodes/<id> \
+  -H "Content-Type: application/json" \
+  -d '{"content": "... updated markdown ..."}'
+```
+
+### New standalone insight
 
 ```bash
 curl -X POST http://localhost:3000/api/nodes \
   -H "Content-Type: application/json" \
   -d '{
-    "label": "Thing Name",
-    "type": "idea|project|note",
-    "content": "# Markdown",
-    "tags": ["optional"]
+    "label": "Concise name",
+    "type": "note|idea|project|memory|reference",
+    "summary": "One sentence, max 120 chars",
+    "content": "# Markdown content",
+    "tags": ["relevant", "tags"]
   }'
 ```
 
-Result: `{ "id": "neu-knoten-id", ... }`
-
-Dann link es:
+Response: `{ "id": "<uuid>", ... }` — then link it:
 
 ```bash
 curl -X POST http://localhost:3000/api/links \
   -H "Content-Type: application/json" \
-  -d '{"source": "parent-id", "target": "neu-knoten-id"}'
+  -d '{"source": "<parent-id>", "target": "<new-id>"}'
 ```
 
----
+**Always link new nodes.** Isolated nodes are hard to recall.
 
-## 6. REST API Schnellreferenz
-
-```
-GET    /api/briefing                 → Session-Einstieg (Markdown oder ?format=json)
-GET    /api/recall?q=                 → gerankte Kurzfassungen im Token-Budget
-GET    /api/tools?format=openai       → Tool-Katalog (Function-Calling)
-GET    /openapi.json                  → OpenAPI-3.1-Vertrag (ChatGPT-Actions)
-GET    /api/brain                     → ganze Brain { nodes, links } (+ ?limit/?offset)
-PUT    /api/nodes/:id                 → Update (Felder mergen)
-POST   /api/nodes                     → Create Node
-DELETE /api/nodes/:id                 → Delete Node + Links
-POST   /api/links                     → Link erstellen
-DELETE /api/links                     → Link löschen
-POST   /api/import                    → .md-Dateien importieren (YAML-Frontmatter)
-```
-
-Fehler kommen einheitlich als `{ "error": "...", "code": "..." }` (z.B. `NOT_FOUND`,
-`VALIDATION_ERROR`, `LABEL_EXISTS`, `SIMILAR_EXISTS`).
-
----
-
-## 7. Was NOT zu tun
-
-❌ Neue .md-Dateien anlegen
-❌ Memo-Systeme doppeln (z.B. separate Memory-Dateien)
-❌ Alte Konversations-Context speichern
-❌ Code-Patterns in Brain speichern (lese Repository stattdessen)
-❌ Timestamps oder temp state speichern
-
----
-
-## 8. Beispiel-Workflow: Standard-Konversation
-
-```
-1. Agent starts
-   → curl -s http://localhost:3000/api/brain
-
-2. Agent receives 7 nodes (Start, User, Feedback, Projekte, Ideen, Notizen, Refs)
-   → Liest alle content Felder
-
-3. User asks: "Neue Widget-Karte?"
-   → Agent prüft Feedback: "README.md muss dabei sein"
-   → Agent schaut Projekte: sieht die 10 Widgets + Versionen
-   → Agent schaut Notizen: sieht Vanilla JS Pattern
-
-4. Agent macht Arbeit
-
-5. User sagt: "gut gemacht, mach das immer so"
-   → Agent PUT /api/nodes/feedback
-   → Feedback-Knoten wird mit neuem Punkt erweitert
-
-6. Nächster Agent kommt
-   → curl -s http://localhost:3000/api/brain
-   → Sieht neues Feedback sofort
-   → Agiert entsprechend
-```
-
----
-
-## 9. Betrieb
-
-### ⭐ Auto-Start auf Boot (systemd Service)
-
-Brain muss als systemd-Service laufen, damit es nach Server-Neustart automatisch wieder startet.
-
-**Einrichtung (einmalig, braucht sudo):**
+### After creating a node: check for suggested links
 
 ```bash
-sudo ./setup-service.sh
-```
-
-Das Script:
-1. Installiert `/etc/systemd/system/pq-brain.service`
-2. Aktiviert Auto-Start mit `systemctl enable pq-brain`
-3. Startet den Service sofort
-
-**Status prüfen:**
-
-```bash
-systemctl status pq-brain
-```
-
-**Logs ansehen:**
-
-```bash
-journalctl -u pq-brain -f       # live
-journalctl -u pq-brain -n 100   # letzte 100 Zeilen
-```
-
-**Service kontrollieren:**
-
-```bash
-systemctl restart pq-brain      # neu starten
-systemctl stop pq-brain         # stoppen
-systemctl disable pq-brain      # Auto-Start deaktivieren
-```
-
-### Konfiguration (optional)
-
-Alle `BRAIN_*`-Variablen siehe `.env.example`. Bei systemd legt `setup-service.sh`
-automatisch `/etc/default/pq-brain` an; alles hängt an `BRAIN_DATA_DIR`.
-
-### Docker
-
-```bash
-docker compose up -d        # Daten/Modell-Cache im Volume brain-data (überlebt Neustarts)
-```
-
-### Backup
-
-Brain schreibt automatisch gedrosselte JSON-Snapshots nach `data/backups/`.
-Wiederherstellen via `POST /api/restore/:filename` (siehe `GET /api/backups`).
-
-### Netzwerk-Zugriff
-
-Brain läuft auf `0.0.0.0:3000`, also erreichbar von überall auf dem Netzwerk:
-```
-http://<your-ip>:3000
+curl -s "http://localhost:3000/api/brain/suggest-links?limit=20"
+# Creates links for any pair involving your new node
 ```
 
 ---
 
-## 10. Häufige Fehler
+## 6. REST API quick reference
 
-| Fehler | Fix |
-|--------|-----|
-| "Cannot POST /api/nodes" | Node mit `POST`, nicht `PUT` |
-| "Source node not found" | Node-IDs sind UUIDs, kopiere exakt |
-| "Link already exists" | Brain dedupliziert, ist ok |
-| DB-Fehler beim Start | `data/`-Verzeichnis schreibbar? (`BRAIN_DATA_DIR` prüfen) |
-| "Port 3000 in use" | `PORT=3002 node server.js` |
+```
+GET    /api/briefing                  → Session entry point (Markdown or ?format=json)
+GET    /api/recall?q=                 → Ranked excerpts within token budget
+GET    /api/tools?format=openai       → Tool catalog (for function-calling clients)
+GET    /openapi.json                  → OpenAPI 3.1 spec (importable as ChatGPT Action)
+GET    /api/brain                     → Full graph { nodes, links }
+GET    /api/brain/suggest-links       → Unlinked similar node pairs
+GET    /api/nodes/:id                 → Single node
+PUT    /api/nodes/:id                 → Update (merges fields)
+POST   /api/nodes                     → Create node
+DELETE /api/nodes/:id                 → Delete node + its links
+POST   /api/links                     → Create link
+DELETE /api/links                     → Delete link
+POST   /api/inbox                     → Submit auto-captured candidates
+GET    /api/inbox                     → List inbox items
+POST   /api/import                    → Import .md files (YAML frontmatter)
+```
+
+Errors: `{ "error": "...", "code": "..." }` (e.g. `NOT_FOUND`, `LABEL_EXISTS`, `SIMILAR_EXISTS`).
 
 ---
 
-## Fertig!
+## 7. What NOT to do
 
-Jeder neue Agent, der diesen Repo klont, kennt sofort:
-- Was der Nutzer erwartet
-- Welche Projekte laufen
-- Welche Technischen Patterns zu nutzen sind
-- Welche Feedback-Regeln gelten
+❌ Create separate `.md` memory files  
+❌ Duplicate memory systems  
+❌ Store conversation history as nodes  
+❌ Store code patterns (read the repository instead)  
+❌ Store timestamps or temporary state  
 
-Kein Rätselraten. Brain ist die Quelle der Wahrheit.
+---
+
+## 8. Example workflow
+
+```
+1. Session starts
+   → GET /api/briefing
+
+2. Agent receives nodes (Start, User, Feedback, Projects, Ideas, Notes)
+   → Reads all content fields
+
+3. User asks: "Add a new feature to the dashboard"
+   → Agent checks Feedback: sees "always write tests first"
+   → Agent checks Projects: sees current version and stack
+   → Agent checks Notes: sees existing patterns
+
+4. Agent does the work
+
+5. User says: "great, always do it that way"
+   → Agent POST /api/nodes (new pattern node)
+   → Agent links it to Projects and Notes
+   → Agent GET /api/brain/suggest-links — applies results
+
+6. Next session, any AI
+   → GET /api/briefing
+   → Sees the new pattern immediately
+   → Acts accordingly
+```
+
+---
+
+## 9. Automation levels by client
+
+| Client | Auto-read Brain | Auto-write | Auto-link | Auto-capture |
+|--------|----------------|------------|-----------|--------------|
+| Claude Code (with hooks) | ✅ SessionStart hook | ✅ Stop hook | ✅ PostToolUse hook | ✅ Auto-capture |
+| Cursor / Windsurf (MCP) | via `.cursorrules` | via rules | via rules | ❌ manual |
+| ChatGPT Custom GPT | via system prompt | via system prompt | via rules | ❌ manual |
+| OpenAI SDK / LangChain | via tool call | via tool call | via tool call | ❌ manual |
+| Any REST client | manual | manual | manual | ❌ manual |
+
+Claude Code achieves full automation via the harness hook system (`install-hooks-claude.sh`). All other clients rely on the AI following the instructions in `AGENTS.md` / `.cursorrules` / system prompt.
+
+---
+
+## 10. Common errors
+
+| Error | Fix |
+|-------|-----|
+| `Cannot POST /api/nodes` | Use POST, not PUT |
+| `Source node not found` | Node IDs are UUIDs — copy exactly |
+| `Link already exists` | Brain deduplicates, safe to ignore |
+| DB error on start | Is `data/` writable? Check `BRAIN_DATA_DIR` |
+| Port 3000 in use | `PORT=3002 node server.js` |
