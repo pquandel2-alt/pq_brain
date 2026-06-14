@@ -47,6 +47,7 @@ curl http://localhost:3000/api/health
 ## Rules — follow these in every session
 
 - **Read Brain first.** Before answering questions about the user's projects, preferences, or history, always check Brain.
+- **Never assert from memory — especially negations.** Before claiming that something does *not* exist, is *only hypothetical*, or is *irrelevant* for the project, verify it with `brain_recall` (and the repo/docs). Negative claims from memory are the most dangerous error class: you rarely feel the urge to check them, yet they are easy to get wrong.
 - **Write back immediately.** New insights, decisions, project progress → `brain_create_node` or `brain_update_node`. Do not save for later.
 - **Always include a `summary`** when creating/updating nodes (1 concise sentence). This improves recall quality significantly.
 - **Always link after creating.** After every `brain_create_node`, call `brain_suggest_links` and apply all relevant suggestions with `brain_link`. Nodes must not remain isolated.
