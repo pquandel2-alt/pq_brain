@@ -30,10 +30,11 @@ fi
 
 # ── Copy hook scripts ─────────────────────────────────────────────────────────
 mkdir -p "$HOOKS_DST"
-cp "$HOOKS_SRC/brain-reminder.sh" "$HOOKS_DST/"
-cp "$HOOKS_SRC/brain-capture.sh"  "$HOOKS_DST/"
-cp "$HOOKS_SRC/brain-autolink.sh" "$HOOKS_DST/"
-cp "$HOOKS_SRC/brain-context.sh"  "$HOOKS_DST/"
+cp "$HOOKS_SRC/brain-reminder.sh"       "$HOOKS_DST/"
+cp "$HOOKS_SRC/brain-capture.sh"        "$HOOKS_DST/"
+cp "$HOOKS_SRC/brain-autolink.sh"       "$HOOKS_DST/"
+cp "$HOOKS_SRC/brain-context.sh"        "$HOOKS_DST/"
+cp "$HOOKS_SRC/brain-session-start.sh"  "$HOOKS_DST/"
 chmod +x "$HOOKS_DST"/brain-*.sh
 echo "✓ Hook scripts installed to $HOOKS_DST"
 
@@ -43,6 +44,7 @@ AUTOLINK="$HOOKS_DST/brain-autolink.sh"
 CONTEXT="$HOOKS_DST/brain-context.sh"
 REMINDER="$HOOKS_DST/brain-reminder.sh"
 CAPTURE="$HOOKS_DST/brain-capture.sh"
+SESSION_START="$HOOKS_DST/brain-session-start.sh"
 
 # Preserve existing settings; only overwrite Brain-related hook sections.
 mkdir -p "$(dirname "$SETTINGS")"
@@ -59,10 +61,12 @@ printf '%s' "$BASE" | jq \
   --arg context "$CONTEXT" \
   --arg reminder "$REMINDER" \
   --arg capture "$CAPTURE" \
+  --arg session_start "$SESSION_START" \
   '
   .hooks.SessionStart = [{"hooks": [
     {"type":"command","command":$cmd1,"statusMessage":"Loading Brain briefing..."},
-    {"type":"command","command":$cmd2,"statusMessage":"Checking Brain project node..."}
+    {"type":"command","command":$cmd2,"statusMessage":"Checking Brain project node..."},
+    {"type":"command","command":$session_start,"statusMessage":"Creating Brain session node..."}
   ]}] |
   .hooks.PostToolUse = [
     {"matcher":"mcp__brain__brain_create_node","hooks":[{"type":"command","command":$autolink}]},

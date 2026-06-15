@@ -91,17 +91,25 @@ function buildReport(f) {
   lines.push(`**Bestand:** ${f.health.totals.nodes} Knoten, ${f.health.totals.links} Links`);
   lines.push('');
 
+  // Schärfung: Schnittmenge Waise ∩ nie-gelesen = dringlichste Kandidaten (weder verlinkt
+  // noch je aufgerufen). Aus der allgemeinen Waisen-Liste herausnehmen, damit nichts doppelt steht.
+  const orphanIds = new Set(f.health.orphans.map(o => o.id || o));
+  const forgotten = (f.health.neverAccessed || []).filter(n => orphanIds.has(n.id));
+  const forgottenIds = new Set(forgotten.map(n => n.id));
+  const orphansRemaining = f.health.orphans.filter(o => !forgottenIds.has(o.id || o));
+
   section('📥 Inbox — Auto-Capture-Kandidaten (bitte reviewen)', f.inbox || [], l => l);
+  section('⚠️ Vergessen (Waise + nie gelesen) — am ehesten archivieren oder überarbeiten', forgotten, l => l.label || l);
   section('Auto-Links neu angelegt (rel_type=auto)', f.autoLinked,
     s => `${s.source.label} ↔ ${s.target.label} (${s.similarity})`);
   section('Link-Vorschläge — bitte prüfen', f.suggestions,
     s => `${s.source.label} ↔ ${s.target.label} (${s.similarity})`);
   section('Knoten ohne Summary', f.missingSummaries, l => l.label || l);
-  section('Waisen (keine Verbindungen)', f.health.orphans, l => l.label || l);
+  section('Waisen (keine Verbindungen)', orphansRemaining, l => l.label || l);
   section('Doppelte Labels', f.health.duplicateLabels,
     d => `${d.label} (${d.count}×)`);
   section('Tote Wikilinks', f.health.deadWikilinks,
-    w => `[[${w.missing}]] in „${w.node}"`);
+    w => `\`${w.missing}\` in „${w.node}"`);
   section(`Lange unverändert (>${STALE_DAYS} Tage) — noch aktuell?`, f.staleNodes,
     n => `${n.label} (zuletzt ${n.last})`);
 
@@ -119,11 +127,27 @@ function summarize(f, changed) {
     suggestions: f.suggestions.length,
     missingSummaries: f.missingSummaries.length,
     orphans: f.health.orphans.length,
+    forgotten: (f.health.neverAccessed || []).filter(n => new Set(f.health.orphans.map(o => o.id || o)).has(n.id)).length,
     duplicateLabels: f.health.duplicateLabels.length,
     deadWikilinks: f.health.deadWikilinks.length,
     staleNodes: f.staleNodes.length,
     inbox: (f.inbox || []).length,
   };
+}
+
+// DB-Hygiene: veraltete dismissed_suggestions löschen + SQLite optimieren.
+// Wird wöchentlich (oder manuell) ausgeführt — keine Einfluss auf Knoten/Links.
+function runDbHygiene() {
+  try {
+    const pruned = db.pruneDismissedSuggestions(90);
+    if (pruned > 0) console.log(`[gardener] ${pruned} alte dismissed_suggestions gelöscht`);
+    // WAL-Checkpoint: verhindert unbegrenztes Wachstum der WAL-Datei.
+    db.db.pragma('wal_checkpoint(TRUNCATE)');
+    // SQLite-Statistiken auffrischen (verbessert Query-Planer-Entscheidungen).
+    db.db.pragma('optimize');
+  } catch (err) {
+    console.error('[gardener] DB-Hygiene Fehler:', err.message);
+  }
 }
 
 // Lauf: Befunde → Bericht → „Wartungsbericht"-Knoten upserten.
@@ -149,7 +173,13 @@ async function runMaintenance() {
     await operations.updateNode(existing.id, { content, summary });
     changed = true;
   }
+
+  // DB-Hygiene einmal täglich (Wächter-Run findet stündlich statt, aber Hygiene
+  // wird nur ausgeführt wenn sich die Stunde im Tages-Modulo ergibt).
+  const hour = new Date().getHours();
+  if (hour === 3) runDbHygiene(); // 03:xx Uhr — geringer Last-Zeitpunkt
+
   return summarize(findings, changed);
 }
 
-module.exports = { collectFindings, buildReport, runMaintenance, summarize, pickAutoLinks, REPORT_LABEL, AUTO_LINK_SIM, STALE_DAYS };
+module.exports = { collectFindings, buildReport, runMaintenance, runDbHygiene, summarize, pickAutoLinks, REPORT_LABEL, AUTO_LINK_SIM, STALE_DAYS };

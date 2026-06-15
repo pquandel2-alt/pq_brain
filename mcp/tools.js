@@ -25,7 +25,7 @@ const retrieval = require('../retrieval');
 const operations = require('../operations');
 const gardener = require('../gardener');
 
-const TYPES = ['memory', 'note', 'idea', 'project', 'reference'];
+const TYPES = ['memory', 'note', 'idea', 'project', 'reference', 'session'];
 const json = (obj) => ({ content: [{ type: 'text', text: JSON.stringify(obj, null, 2) }] });
 const text = (s) => ({ content: [{ type: 'text', text: s }] });
 const fail = (msg) => ({ content: [{ type: 'text', text: msg }], isError: true });
@@ -43,10 +43,12 @@ const TOOLS = [
       limit: z.number().int().optional().describe('max. Treffer (Default 8)'),
       rerank: z.boolean().optional().describe('Cross-Encoder Re-Ranking (Opt-in, Default false)'),
       expand: z.boolean().optional().describe('A4: Graph-Expansion — 1-Hop-Nachbarn der Top-3 mit anhängen (Default false)'),
+      qexpand: z.boolean().optional().describe('Query-Expansion via Pseudo-Relevance-Feedback — hebt Recall bei großen Graphen, verdoppelt aber die Latenz (Default false)'),
       charsPerToken: z.number().optional().describe('Tokenizer-Kalibrierung für die Budget-SCHÄTZUNG (Default 4, geklemmt auf 1–20)'),
+      type: z.enum(['memory', 'note', 'idea', 'project', 'reference', 'session']).optional().describe('Nur Knoten dieses Typs zurückgeben'),
     },
-    handler: async ({ q, budget, limit, rerank, expand, charsPerToken }, ctx) => {
-      const out = await retrieval.recall({ q, budget, limit, rerank: rerank === true, expand: expand === true, charsPerToken });
+    handler: async ({ q, budget, limit, rerank, expand, qexpand, charsPerToken, type }, ctx) => {
+      const out = await retrieval.recall({ q, budget, limit, rerank: rerank === true, expand: expand === true, qexpand: qexpand === true, charsPerToken, type });
       if (out.results.length) {
         try { db.touchAccess(out.results.map(r => r.id)); } catch {}
         ctx.onAccess(out.results.map(r => r.id));
@@ -145,6 +147,7 @@ const TOOLS = [
       tags: z.array(z.string()).optional(), summary: z.string().optional(),
       source: z.string().optional(), force: z.boolean().optional(),
       ttl: z.number().int().optional().describe('Time-to-live in Sekunden (null = dauerhaft)'),
+      importance: z.enum(['high', 'medium', 'low']).optional().describe('Wichtigkeit des Knotens für das Ranking (Default medium)'),
     },
     handler: async (args, ctx) => {
       const r = await operations.createNode({ ...args, type: args.type || 'note' });
@@ -202,6 +205,7 @@ const TOOLS = [
       id: z.string(), label: z.string().optional(), type: z.enum(TYPES).optional(),
       content: z.string().optional(), tags: z.array(z.string()).optional(),
       summary: z.string().optional(), source: z.string().optional(),
+      importance: z.enum(['high', 'medium', 'low']).optional().describe('Wichtigkeit des Knotens für das Ranking'),
     },
     handler: async ({ id, ...updates }, ctx) => {
       Object.keys(updates).forEach(k => updates[k] === undefined && delete updates[k]);

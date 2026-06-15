@@ -33,9 +33,14 @@ async function createNode(spec) {
   }
 }
 
-async function createNodeImpl({ label, type = 'note', content = '', tags = [], summary = null, source = null, ttl = null, force = false }) {
+// BRAIN_AGENT_SOURCE: identifiziert welche KI/Tool Knoten anlegt (z.B. 'claude-code', 'cursor', 'chatgpt').
+const AGENT_SOURCE = process.env.BRAIN_AGENT_SOURCE || null;
+
+async function createNodeImpl({ label, type = 'note', content = '', tags = [], summary = null, source = null, ttl = null, force = false, importance = 'medium' }) {
   const lbl = String(label || '').trim();
   if (!lbl) return { error: 'label_required' };
+  // Auto-Source: wenn kein source angegeben, aus Env-Var setzen.
+  const effectiveSource = source || AGENT_SOURCE;
 
   const existing = db.findByLabel(lbl);
   if (existing) return { error: 'label_exists', existing: { id: existing.id, label: existing.label } };
@@ -58,12 +63,16 @@ async function createNodeImpl({ label, type = 'note', content = '', tags = [], s
           if (near && near.distance < DEDUP_DISTANCE) {
             const sim = db.getNodeFull(near.node_id);
             // C2: Preview mitliefern → Agent spart den separaten brain_get vor der Merge-Entscheidung.
+            // C3: konkreter Merge-Vorschlag statt reiner Ablehnung — Agent weiß sofort, welche Aktion.
+            const simLabel = sim ? sim.label : near.node_id;
             return {
               error: 'similar_exists',
               similarity: +(1 - near.distance).toFixed(3),
               similar: sim
                 ? { id: sim.id, label: sim.label, type: sim.type, preview: require('./retrieval').previewText(sim) }
                 : { id: near.node_id },
+              suggestion: 'merge',
+              hint: `Sehr ähnlich zu „${simLabel}". Neue Info per brain_update_node (id=${near.node_id}) in den bestehenden Knoten einarbeiten, statt ein Duplikat anzulegen. Nur wenn bewusst eigenständig: force=true.`,
             };
           }
         }
@@ -71,7 +80,7 @@ async function createNodeImpl({ label, type = 'note', content = '', tags = [], s
     }
   }
 
-  const node = db.createNode({ label: lbl, type, content, tags, summary, source, ttl });
+  const node = db.createNode({ label: lbl, type, content, tags, summary, source: effectiveSource, ttl, importance });
   if (vec) db.upsertEmbedding(node.id, vec, MODEL);
 
   // B1: [[Wikilinks]] im content zu Kanten auflösen.
@@ -79,6 +88,9 @@ async function createNodeImpl({ label, type = 'note', content = '', tags = [], s
 
   return dedupSkipped ? { node, dedupSkipped: true } : { node };
 }
+
+// AGENT_SOURCE für Exporte zugänglich machen (z.B. für Tests/Hooks).
+createNodeImpl.AGENT_SOURCE = AGENT_SOURCE;
 
 async function updateNode(id, updates) {
   const _t0 = Date.now();

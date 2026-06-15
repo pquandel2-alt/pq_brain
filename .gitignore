@@ -12,3 +12,4 @@ data/models/
 __pycache__/
 *.pyc
 eval/results/
+eval/gold.json

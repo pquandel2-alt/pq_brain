@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "_comment": "Kopiere diese Datei nach eval/gold.json und passe die Queries auf deinen eigenen Graph an.",
+  "queries": [
+    {
+      "id": "q001",
+      "query": "Wo läuft mein persönlicher Knowledge-Graph und auf welchem Port?",
+      "expected": [{ "label": "Brain", "grade": 3 }]
+    },
+    {
+      "id": "q002",
+      "query": "Wie veröffentliche ich eine neue Version meines Projekts?",
+      "expected": [{ "label": "Dev-Tooling & Release-Workflow", "grade": 3 }]
+    },
+    {
+      "id": "q003",
+      "query": "Unter welchem GitHub-Account sind meine Repos zu finden?",
+      "expected": [{ "label": "GitHub Repos", "grade": 3 }]
+    },
+    {
+      "id": "q004",
+      "query": "Was sind meine Coding-Präferenzen und Konventionen?",
+      "expected": [{ "label": "Coding-Präferenzen", "grade": 3 }]
+    }
+  ]
+}

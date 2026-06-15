@@ -51,11 +51,12 @@ function rerankText(row) {
 }
 
 // Reciprocal Rank Fusion mehrerer gerankter ID-Listen → [[id, score], ...]
-function rrf(lists, k = 60) {
+function rrf(lists, k = 60, weights = null) {
   const scores = new Map();
-  for (const list of lists) {
-    list.forEach((id, idx) => scores.set(id, (scores.get(id) || 0) + 1 / (k + idx + 1)));
-  }
+  lists.forEach((list, li) => {
+    const w = weights ? (weights[li] ?? 1) : 1;
+    list.forEach((id, idx) => scores.set(id, (scores.get(id) || 0) + w / (k + idx + 1)));
+  });
   return [...scores.entries()].sort((a, b) => b[1] - a[1]);
 }
 
@@ -65,9 +66,20 @@ const USED_WEIGHT  = 0.06; // Gewicht des Usage-Signals (brain_mark_used) — st
 const RECENCY_WEIGHT = 0.05; // Gewicht der Aktualität
 const RECENCY_HALF   = 30;   // Halbwertszeit in Tagen
 
-const FRECENCY_MAX = 1.1; // Gesamtboost nie mehr als 10% — verhindert Dominanz hochfrequenter Knoten
+// Importance-Multiplikator: high=1.2, medium=1.0, low=0.85
+const IMPORTANCE_FACTORS = { high: 1.2, medium: 1.0, low: 0.85 };
+// Type-Multiplikator: project/memory leicht bevorzugt, session deprioritiert
+const TYPE_FACTORS = { project: 1.1, memory: 1.1, reference: 1.05, note: 1.0, idea: 0.95, session: 0.8 };
 
-function frecencyBoost(accessCount, accessedAt, usedCount) {
+const FRECENCY_MAX = 1.10; // Gesamtdeckel +10%: importance/type nur milde Präferenz, nie Dominanz übers Relevanzsignal (eval-kalibriert 2026-06-14: 1.45→1.10 hob MRR 0.55→0.93)
+
+// Keyword-Gewicht in der RRF-Fusion (Semantik = 1.0): bge-m3 schlägt die FTS5-Keyword-Suche
+// hier auf JEDEM Query-Typ (auch Stichworten), darum trägt Keyword nur als schwaches
+// Recall-Sicherheitsnetz bei — hebt R@5 ohne die Semantik-Topplätze zu verdrängen.
+// eval-kalibriert 2026-06-14 (Sweep über 25 Gold-Queries): 0.05 maximiert R@5 (0.98).
+const KW_RRF_WEIGHT = 0.05;
+
+function frecencyBoost(accessCount, accessedAt, usedCount, importance = 'medium', type = 'note') {
   const freqBoost = 1 + FREQ_WEIGHT * Math.log1p(accessCount || 0);
   const usedBoost = 1 + USED_WEIGHT * Math.log1p(usedCount || 0);
   let recencyBoost = 1;
@@ -75,50 +87,72 @@ function frecencyBoost(accessCount, accessedAt, usedCount) {
     const ageDays = (Date.now() - new Date(accessedAt).getTime()) / 86_400_000;
     recencyBoost = 1 + RECENCY_WEIGHT * Math.exp(-ageDays / RECENCY_HALF);
   }
-  return Math.min(freqBoost * usedBoost * recencyBoost, FRECENCY_MAX);
+  const impFactor = IMPORTANCE_FACTORS[importance] ?? 1.0;
+  const typeFactor = TYPE_FACTORS[type] ?? 1.0;
+  return Math.min(freqBoost * usedBoost * recencyBoost * impFactor * typeFactor, FRECENCY_MAX);
 }
 
 /**
  * Gerankte [[id, score], ...] für eine Query.
  * mode: 'hybrid' (Default) | 'semantic' | 'keyword'
  * frecency: A2-Boost an/aus (Default an; `false` nur fürs Eval-Harness).
+ * type: optionaler Filter — nur Knoten dieses Typs zurückgeben.
  */
-async function rankedIds({ q, mode = 'hybrid', limit = 10, frecency = true }) {
+async function rankedIds({ q, mode = 'hybrid', limit = 10, frecency = true, type }) {
   const _t0 = Date.now();
   metrics.counter('search.calls');
   metrics.counter(`search.mode.${mode}`);
   try {
-    return await rankedIdsImpl({ q, mode, limit, frecency });
+    return await rankedIdsImpl({ q, mode, limit, frecency, type });
   } finally {
     metrics.observe('search', Date.now() - _t0);
   }
 }
 
-async function rankedIdsImpl({ q, mode = 'hybrid', limit = 10, frecency = true }) {
+async function rankedIdsImpl({ q, mode = 'hybrid', limit = 10, frecency = true, type }) {
   const lim = Math.max(1, Math.min(parseInt(limit, 10) || 10, 100));
 
+  // type-Filter: IDs vorab einschränken, wenn ein Typ angegeben ist.
+  let allowedIds = null;
+  if (type) {
+    const rows = db.db.prepare(
+      `SELECT id FROM nodes WHERE type = ? AND (expires_at IS NULL OR julianday(expires_at) > julianday('now'))`
+    ).all(type);
+    allowedIds = new Set(rows.map(r => r.id));
+    if (allowedIds.size === 0) return [];
+  }
+  const filterAllowed = (ids) => allowedIds ? ids.filter(id => allowedIds.has(id)) : ids;
+
   if (mode === 'keyword' || !db.vecEnabled && mode === 'semantic') {
-    return db.searchKeywordRanked(q, lim).map((r, i) => [r.node_id, +(1 / (i + 1)).toFixed(4)]);
+    return filterAllowed(db.searchKeywordRanked(q, lim * (allowedIds ? 3 : 1)).map(r => r.node_id))
+      .slice(0, lim)
+      .map((id, i) => [id, +(1 / (i + 1)).toFixed(4)]);
   }
   if (mode === 'semantic') {
-    return db.searchSemantic(await embed(q, 'query'), lim).map(h => [h.node_id, +(1 - h.distance).toFixed(4)]);
+    return filterAllowed(db.searchSemantic(await embed(q, 'query'), lim * (allowedIds ? 3 : 1)).map(h => h.node_id))
+      .slice(0, lim)
+      .map((id, i) => [id, +(1 - i * 0.01).toFixed(4)]);
   }
 
   // hybrid: Semantik + Keyword über RRF, dann A2 Frecency-Boost
+  const pool = lim * (allowedIds ? 4 : 1);
   let sem = [];
   if (db.vecEnabled) {
-    try { sem = db.searchSemantic(await embed(q, 'query'), 40).map(r => r.node_id); } catch { /* degr. */ }
+    try { sem = db.searchSemantic(await embed(q, 'query'), Math.min(40, pool)).map(r => r.node_id); } catch { /* degr. */ }
   }
-  const kw = db.searchKeywordRanked(q, 40).map(r => r.node_id);
-  const fused = rrf([sem, kw]).slice(0, lim);
+  const kw = db.searchKeywordRanked(q, Math.min(40, pool)).map(r => r.node_id);
+  const fused = rrf([sem, kw], 60, [1.0, KW_RRF_WEIGHT]);
+  const filtered = allowedIds
+    ? fused.filter(([id]) => allowedIds.has(id)).slice(0, lim)
+    : fused.slice(0, lim);
 
   // A2: Frecency-Boost nur im hybrid-Modus anwenden (abschaltbar fürs Eval).
-  if (!frecency) return fused.map(([id, score]) => [id, +score.toFixed(4)]);
-  const ids = fused.map(([id]) => id);
+  if (!frecency) return filtered.map(([id, score]) => [id, +score.toFixed(4)]);
+  const ids = filtered.map(([id]) => id);
   const accessStats = db.getAccessStats(ids);
-  return fused.map(([id, score]) => {
+  return filtered.map(([id, score]) => {
     const stats = accessStats.get(id) || {};
-    const boosted = score * frecencyBoost(stats.access_count, stats.accessed_at, stats.used_count);
+    const boosted = score * frecencyBoost(stats.access_count, stats.accessed_at, stats.used_count, stats.importance, stats.type);
     return [id, +boosted.toFixed(4)];
   }).sort((a, b) => b[1] - a[1]);
 }
@@ -135,21 +169,64 @@ async function searchCompact({ q, mode = 'hybrid', limit = 10 }) {
     });
 }
 
+// Deutsche/englische Füllwörter, die als Expansionsbegriffe nur Rauschen wären.
+const QEXPAND_STOP = new Set([
+  'der', 'die', 'das', 'und', 'oder', 'ein', 'eine', 'einen', 'einem', 'einer', 'mein', 'meine', 'meinen',
+  'ist', 'sind', 'war', 'wie', 'was', 'wo', 'wer', 'wann', 'warum', 'welche', 'welcher', 'welches', 'auf',
+  'für', 'mit', 'von', 'vom', 'zum', 'zur', 'den', 'dem', 'des', 'sich', 'auch', 'noch', 'nur', 'aus', 'bei',
+  'gibt', 'kann', 'man', 'als', 'auf', 'über', 'unter', 'nach', 'vor', 'durch', 'gibt', 'hat', 'haben',
+  'the', 'and', 'for', 'with', 'how', 'what', 'where', 'который', 'this', 'that', 'are', 'can',
+]);
+
+/**
+ * Query-Expansion via Pseudo-Relevance-Feedback (LLM-frei): aus den Top-Seed-Treffern
+ * die häufigsten inhaltstragenden Begriffe (Label + Summary) ziehen, die noch nicht in der
+ * Query stehen. Liefert bis zu `max` Begriffe als Zusatz-String. Kein LLM, nutzt nur die
+ * vorhandene Suche — Trade-off: ein zweiter Suchlauf. Per Eval gegengeprüft.
+ */
+function expansionTerms(seedRows, queryStr, max = 4) {
+  const queryTokens = new Set(String(queryStr).toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean));
+  const freq = new Map();
+  for (const row of seedRows) {
+    if (!row) continue;
+    const text = `${row.label || ''} ${row.summary || ''}`.toLowerCase();
+    for (const tok of text.split(/[^\p{L}\p{N}]+/u)) {
+      if (tok.length < 3 || queryTokens.has(tok) || QEXPAND_STOP.has(tok)) continue;
+      freq.set(tok, (freq.get(tok) || 0) + 1);
+    }
+  }
+  return [...freq.entries()].sort((a, b) => b[1] - a[1]).slice(0, max).map(([t]) => t).join(' ');
+}
+
 /**
  * Token-Budget-Recall: gerankte Kurzfassungen bis zum Budget.
  * rerank: Opt-in (Cross-Encoder, Default aus).
  * expand: Opt-in (A4 — 1-Hop-Graph-Expansion, Default aus).
+ * qexpand: Opt-in (Query-Expansion via Pseudo-Relevance-Feedback, Default aus).
+ * type: optionaler Typ-Filter (z.B. 'project', 'memory').
  */
-async function recall({ q, budget = 4000, limit = 8, rerank: doRerank = false, expand = false, frecency = true, charsPerToken }) {
+async function recall({ q, budget = 4000, limit = 8, rerank: doRerank = false, expand = false, qexpand = false, frecency = true, charsPerToken, type }) {
   const lim = Math.max(1, Math.min(parseInt(limit, 10) || 8, 50));
   const bud = Math.max(200, parseInt(budget, 10) || 4000);
   const cpt = normCharsPerToken(charsPerToken);
 
   const useRerank = doRerank === true || doRerank === 'true';
   const useExpand = expand === true || expand === 'true';
+  const useQExpand = qexpand === true || qexpand === 'true';
   const poolSize = useRerank ? Math.max(lim * 3, 24) : lim;
 
-  const ranked = await rankedIds({ q, mode: 'hybrid', limit: poolSize, frecency });
+  // Query-Expansion (PRF): kurze Seed-Suche → Begriffe aus Top-Treffern an die Query hängen.
+  let effectiveQ = q;
+  if (useQExpand) {
+    const seed = await rankedIds({ q, mode: 'hybrid', limit: 3, frecency, type });
+    if (seed.length > 0) {
+      const seedPreview = db.getNodesPreview(seed.map(([id]) => id));
+      const extra = expansionTerms(seed.map(([id]) => seedPreview.get(id)), q);
+      if (extra) effectiveQ = `${q} ${extra}`;
+    }
+  }
+
+  const ranked = await rankedIds({ q: effectiveQ, mode: 'hybrid', limit: poolSize, frecency, type });
 
   // A4: Graph-Expansion — 1-Hop-Nachbarn der Top-3 mit abgewertetem Score anhängen.
   let expandedRanked = ranked;
@@ -218,36 +295,74 @@ async function recall({ q, budget = 4000, limit = 8, rerank: doRerank = false, e
 }
 
 // B2: Link-Vorschläge — semantisch ähnliche, noch unverlinkte Knotenpaare.
-// Paarweise Cosine-Similarity über die GESPEICHERTEN Vektoren (normalisiert →
-// Dot-Product) statt Re-Embedding pro Knoten. Für bge-m3 mathematisch identisch
-// (kein query/passage-Prefix); bei Wechsel auf z.B. e5-Modelle prüfen!
+//
+// Zwei Pfade je nach Graphgröße:
+// < KNN_THRESHOLD: klassischer O(n²) Dot-Product-Loop (kein SQL-Overhead bei kleinen Graphen)
+// ≥ KNN_THRESHOLD: KNN-per-Node via sqlite-vec → O(n × K log n) statt O(n²)
+//
+// Für bge-m3 sind Vektoren normalisiert → Dot-Product = Cosine-Similarity.
+// Bei Wechsel auf nicht-normalisierte Modelle hier prüfen!
+const KNN_THRESHOLD = 50; // ab dieser Knotenanzahl auf KNN umschalten
+const KNN_K = 15;         // Top-K-Nachbarn pro Knoten (großzügig für hohe Ähnlichkeitsschwelle)
+const SUGGEST_SIM = 0.75; // Mindest-Similarity für Vorschläge
+const SUGGEST_DIST = 1 - SUGGEST_SIM; // in Cosine-Distanz (sqlite-vec)
+
 async function suggestLinks({ limit = 20 } = {}) {
   if (!db.vecEnabled) return [];
-  const embeddings = db.getAllEmbeddings();
-  if (embeddings.size < 2) return [];
   const linked = db.getAllLinkPairs();
   const dismissed = db.getDismissedPairs();
-  // Nur lebende (nicht abgelaufene) Knoten — liefert auch gleich die Labels.
-  const preview = db.getNodesPreview([...embeddings.keys()]);
 
+  // Nur lebende Knoten — getNodesPreview gibt nur nicht-abgelaufene zurück.
+  // Für Embedding-IDs: wir brauchen den Schnitt von vec_nodes und lebenden Knoten.
+  const embeddings = db.getAllEmbeddings();
+  if (embeddings.size < 2) return [];
+  const preview = db.getNodesPreview([...embeddings.keys()]);
   const ids = [...embeddings.keys()].filter(id => preview.has(id));
+
   const suggestions = [];
-  for (let i = 0; i < ids.length; i++) {
-    const a = embeddings.get(ids[i]);
-    for (let j = i + 1; j < ids.length; j++) {
-      const b = embeddings.get(ids[j]);
-      let dot = 0;
-      for (let k = 0; k < a.length; k++) dot += a[k] * b[k];
-      if (dot < 0.75) continue;
-      const pairKey = [ids[i], ids[j]].sort().join('|');
-      if (linked.has(pairKey) || dismissed.has(pairKey)) continue;
-      suggestions.push({
-        source: { id: ids[i], label: preview.get(ids[i]).label },
-        target: { id: ids[j], label: preview.get(ids[j]).label },
-        similarity: +dot.toFixed(3),
-      });
+  const seen = new Set();
+
+  if (ids.length < KNN_THRESHOLD) {
+    // Kleiner Graph: klassischer O(n²) Dot-Product (kein SQL-Query-Overhead).
+    for (let i = 0; i < ids.length; i++) {
+      const a = embeddings.get(ids[i]);
+      for (let j = i + 1; j < ids.length; j++) {
+        const b = embeddings.get(ids[j]);
+        let dot = 0;
+        for (let k = 0; k < a.length; k++) dot += a[k] * b[k];
+        if (dot < SUGGEST_SIM) continue;
+        const pairKey = [ids[i], ids[j]].sort().join('|');
+        if (linked.has(pairKey) || dismissed.has(pairKey)) continue;
+        suggestions.push({
+          source: { id: ids[i], label: preview.get(ids[i]).label },
+          target: { id: ids[j], label: preview.get(ids[j]).label },
+          similarity: +dot.toFixed(3),
+        });
+      }
+    }
+  } else {
+    // Großer Graph: KNN-per-Node via sqlite-vec → O(n × K log n).
+    for (const id of ids) {
+      const vec = db.getEmbeddingRaw(id);
+      if (!vec) continue;
+      // searchSemantic gibt Cosine-Distanz zurück (klein = ähnlicher).
+      const neighbors = db.searchSemantic(vec, KNN_K + 1);
+      for (const { node_id: tid, distance } of neighbors) {
+        if (tid === id) continue;
+        if (distance > SUGGEST_DIST) continue; // Cosine-Distanz > Schwelle → zu unähnlich
+        if (!preview.has(tid)) continue;        // nur lebende Knoten
+        const pairKey = [id, tid].sort().join('|');
+        if (seen.has(pairKey) || linked.has(pairKey) || dismissed.has(pairKey)) continue;
+        seen.add(pairKey);
+        suggestions.push({
+          source: { id, label: preview.get(id).label },
+          target: { id: tid, label: preview.get(tid).label },
+          similarity: +(1 - distance).toFixed(3),
+        });
+      }
     }
   }
+
   return suggestions.sort((a, b) => b.similarity - a.similarity).slice(0, limit);
 }
 
@@ -331,11 +446,17 @@ function buildBriefing({ budget = 1500, charsPerToken } = {}) {
   if (startId) {
     const full = db.getNodeFull(startId);
     if (full) {
-      // Inhalt aufs Budget kürzen — Briefing bleibt eine Übersicht, kein Volltext.
-      const maxContentChars = Math.max(200, Math.floor(bud * cpt * 0.6));
+      // Harter Deckel: Start-Knoten bekommt maximal 50% des Budgets (in Zeichen).
+      // Neighbors + Overhead brauchen den Rest. estTokens(content)*cpt = Zeichen.
+      const maxContentChars = Math.max(200, Math.floor(bud * cpt * 0.5));
       let content = full.content || '';
       let truncated = false;
-      if (content.length > maxContentChars) { content = content.slice(0, maxContentChars).trimEnd(); truncated = true; }
+      if (content.length > maxContentChars) {
+        // Am letzten Zeilenumbruch vor der Grenze schneiden — kein Wort-Riss.
+        const cutPoint = content.lastIndexOf('\n', maxContentChars);
+        content = content.slice(0, cutPoint > 100 ? cutPoint : maxContentChars).trimEnd();
+        truncated = true;
+      }
       start = { id: full.id, label: full.label, type: full.type, summary: full.summary || null, content, truncated };
       const nb = neighbors({ id: startId, depth: 1, direction: 'both' });
       if (nb) neighborsOut = nb.nodes.filter(n => n.id !== startId).slice(0, BRIEFING_MAX_NEIGHBORS);

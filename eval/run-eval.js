@@ -32,6 +32,7 @@ const VARIANTS = {
   'hybrid-nofrec':        async (q) => (await rankedIds({ q, mode: 'hybrid', limit: LIMIT, frecency: false })).map(([id]) => id),
   'hybrid+rerank':        async (q) => (await recall({ q, budget: HUGE_BUDGET, limit: LIMIT, rerank: true })).results.map(r => r.id),
   'hybrid+expand':        async (q) => (await recall({ q, budget: HUGE_BUDGET, limit: LIMIT, expand: true })).results.map(r => r.id),
+  'hybrid+qexpand':       async (q) => (await recall({ q, budget: HUGE_BUDGET, limit: LIMIT, qexpand: true })).results.map(r => r.id),
   'hybrid+rerank+expand': async (q) => (await recall({ q, budget: HUGE_BUDGET, limit: LIMIT, rerank: true, expand: true })).results.map(r => r.id),
 };
 
@@ -57,7 +58,11 @@ function parseArgs(argv) {
 // ── Gold-Set laden + Labels zu IDs auflösen (harter Fehler bei Lücken) ──────
 function loadGold(goldPath) {
   if (!fs.existsSync(goldPath)) {
-    console.error(`Gold-Set fehlt: ${goldPath}\nBootstrap: npm run eval:suggest > vorschlaege.txt, dann kuratieren.`);
+    const examplePath = path.join(path.dirname(goldPath), 'gold.example.json');
+    console.error(`Gold-Set fehlt: ${goldPath}`);
+    console.error(`Startpunkt: cp eval/gold.example.json eval/gold.json  (dann Queries auf deinen Graph anpassen)`);
+    console.error(`Oder generieren lassen: npm run eval:suggest > vorschlaege.txt`);
+    if (!fs.existsSync(examplePath)) console.error(`Hinweis: gold.example.json ebenfalls nicht gefunden — ggf. neu auschecken.`);
     process.exit(1);
   }
   const gold = JSON.parse(fs.readFileSync(goldPath, 'utf8'));

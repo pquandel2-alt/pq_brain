@@ -15,7 +15,7 @@ const metrics = require('./metrics');
 const app = express();
 const BACKUP_DIR = config.BACKUP_DIR;   // alle Pfade aus BRAIN_DATA_DIR (eine Quelle)
 const LOG_FILE = config.LOG_FILE;
-const ALLOWED_TYPES = ['memory', 'note', 'idea', 'project', 'reference'];
+const ALLOWED_TYPES = ['memory', 'note', 'idea', 'project', 'reference', 'session'];
 const MAX_BACKUPS = 72;                          // ~3 Tage bei stündlichem Takt
 const BACKUP_MIN_INTERVAL_MS = 60 * 60 * 1000;   // max. 1 Backup pro Stunde
 
@@ -359,7 +359,9 @@ app.get('/api/recall', async (req, res) => {
 
     const doRerank = req.query.rerank === 'true'; // Opt-in (Default aus)
     const doExpand = req.query.expand === 'true'; // A4: Graph-Expansion Opt-in
-    const out = await retrieval.recall({ q: query, budget: req.query.budget, limit: req.query.limit, rerank: doRerank, expand: doExpand, charsPerToken: req.query.charsPerToken });
+    const doQExpand = req.query.qexpand === 'true'; // Query-Expansion (PRF) Opt-in
+    const typeFilter = req.query.type || undefined; // Typ-Filter: nur Knoten dieses Typs
+    const out = await retrieval.recall({ q: query, budget: req.query.budget, limit: req.query.limit, rerank: doRerank, expand: doExpand, qexpand: doQExpand, charsPerToken: req.query.charsPerToken, type: typeFilter });
     res.json(out);
     if (out.results.length) {
       const ids = out.results.map(r => r.id);
@@ -497,6 +499,9 @@ app.post('/api/brain/maintenance', async (req, res) => {
 // verhindert Re-Capture bekannten Wissens; nie reviewte Items laufen via TTL ab.
 const INBOX_TAG = 'inbox';
 const INBOX_MAX_NODES = 10; // Deckel pro Session gegen Extraktions-Ausreißer
+// Auto-Promote: Knoten mit confidence >= Schwelle direkt als reguläre Knoten anlegen.
+// 0 = immer manuell; 1 = nie auto. Env-Var BRAIN_AUTO_ACCEPT_THRESHOLD (Default 0.85).
+const AUTO_ACCEPT_THRESHOLD = parseFloat(process.env.BRAIN_AUTO_ACCEPT_THRESHOLD || '0.85');
 
 // Inbox-Kandidaten mit Ablaufdatum (für GUI/Agenten-Review).
 function listInbox() {
@@ -532,24 +537,33 @@ app.post('/api/inbox', async (req, res) => {
 
     // Auf INBOX_MAX_NODES kappen und Capture-Metadaten erzwingen.
     const source = sessionId ? `session:${sessionId}` : 'session:unknown';
-    const nodes = raw.slice(0, INBOX_MAX_NODES).map(n => ({
-      label: validateLabel(n.label),
-      type: validateType(n.type),
-      content: validateContent(n.content),
-      summary: validateSummary(n.summary) ?? null,
-      tags: [...new Set([...validateTags(n.tags), INBOX_TAG])],
-      source,
-      ttl: config.INBOX_TTL,
-      force: false, // Dedup aktiv lassen → bekanntes Wissen nicht doppeln
-    }));
+    const nodes = raw.slice(0, INBOX_MAX_NODES).map(n => {
+      const confidence = typeof n.confidence === 'number' ? n.confidence : 0;
+      const autoAccept = AUTO_ACCEPT_THRESHOLD > 0 && confidence >= AUTO_ACCEPT_THRESHOLD;
+      return {
+        label: validateLabel(n.label),
+        type: validateType(n.type),
+        content: validateContent(n.content),
+        summary: validateSummary(n.summary) ?? null,
+        // Auto-Promote: bei hohem Confidence direkt als regulärer Knoten, kein Review nötig.
+        tags: autoAccept
+          ? [...new Set(validateTags(n.tags))]
+          : [...new Set([...validateTags(n.tags), INBOX_TAG])],
+        source,
+        ttl: autoAccept ? null : config.INBOX_TTL,
+        force: false, // Dedup aktiv lassen → bekanntes Wissen nicht doppeln
+        _autoAccepted: autoAccept, // intern für Logging
+      };
+    });
 
-    const out = await operations.bulkCreate({ nodes });
+    const out = await operations.bulkCreate({ nodes: nodes.map(({ _autoAccepted, ...n }) => n) });
+    const autoAccepted = nodes.filter(n => n._autoAccepted).length;
     if (out.created > 0) {
       afterWrite();
       broadcastLog('created', out.results.filter(r => r.ok).slice(0, 3).map(r => r.label));
     }
-    logger.info('Inbox intake', { session: sessionId, created: out.created, skipped: out.failed });
-    res.json(out);
+    logger.info('Inbox intake', { session: sessionId, created: out.created, skipped: out.failed, autoAccepted });
+    res.json({ ...out, autoAccepted });
   } catch (err) {
     health.errorCount++;
     health.lastError = err.message;
@@ -993,7 +1007,7 @@ async function gardenerRun(trigger) {
     return { error: err.message };
   }
 }
-setInterval(() => gardenerRun('daily'), 24 * 60 * 60_000);
+setInterval(() => gardenerRun('hourly'), 60 * 60_000);
 
 // Embedding-Drain: Knoten ohne Vektor nachträglich embedden (z.B. Kaltstart-Skip
 // in operations.createNode oder Modellwechsel). Sequentiell, niedrige Priorität.

@@ -84,6 +84,8 @@ db.exec(`
     op         TEXT NOT NULL,
     PRIMARY KEY (node_id, version)
   );
+  CREATE INDEX IF NOT EXISTS idx_node_history_node_id ON node_history(node_id);
+  CREATE INDEX IF NOT EXISTS idx_nodes_created ON nodes(created);
 
   CREATE TABLE IF NOT EXISTS action_log (
     id     INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -187,6 +189,15 @@ db.exec(`
     created  TEXT NOT NULL
   )
 `);
+
+// ── Schema-Migration: importance-Feld (high/medium/low) ───────────────
+{
+  const cols = db.prepare('PRAGMA table_info(nodes)').all().map(c => c.name);
+  if (!cols.includes('importance')) {
+    db.exec("ALTER TABLE nodes ADD COLUMN importance TEXT DEFAULT 'medium'");
+    console.log('[db] Migration: importance-Spalte hinzugefügt');
+  }
+}
 
 // Inbox-Review-Entscheidungen als gelabelte Trainingsdaten (für späteres
 // Capture-Fine-Tune). Voller Knoten-Snapshot, weil abgelehnte/abgelaufene
@@ -395,14 +406,15 @@ function getInboxDecisions({ limit = 500 } = {}) {
   ).all(limit).map(r => ({ ...r, tags: JSON.parse(r.tags || '[]') }));
 }
 
-const createNode = db.transaction(({ label, type = 'note', content = '', tags = [], summary = null, source = null, ttl = null }) => {
+const createNode = db.transaction(({ label, type = 'note', content = '', tags = [], summary = null, source = null, ttl = null, importance = 'medium' }) => {
   const id = randomUUID();
   const created = new Date().toISOString();
   const expires_at = ttl ? new Date(Date.now() + ttl * 1000).toISOString() : null;
+  const imp = ['high', 'medium', 'low'].includes(importance) ? importance : 'medium';
   db.prepare(
-    `INSERT INTO nodes (id, label, type, content, summary, created, source, version, ttl, expires_at)
-     VALUES (@id, @label, @type, @content, @summary, @created, @source, 1, @ttl, @expires_at)`
-  ).run({ id, label, type, content, summary, created, source, ttl, expires_at });
+    `INSERT INTO nodes (id, label, type, content, summary, created, source, version, ttl, expires_at, importance)
+     VALUES (@id, @label, @type, @content, @summary, @created, @source, 1, @ttl, @expires_at, @importance)`
+  ).run({ id, label, type, content, summary, created, source, ttl, expires_at, importance: imp });
   setTags(id, tags);
   return toPublicNode({ id, label, type, content, created }, new Map([[id, tags]]));
 });
@@ -419,12 +431,16 @@ const updateNode = db.transaction((id, updates) => {
     expires_at = ttl ? new Date(Date.now() + ttl * 1000).toISOString() : null;
   }
 
+  const imp = updates.importance !== undefined
+    ? (['high', 'medium', 'low'].includes(updates.importance) ? updates.importance : existing.importance)
+    : existing.importance;
   const next = {
     label: updates.label !== undefined ? updates.label : existing.label,
     type: updates.type !== undefined ? updates.type : existing.type,
     content: updates.content !== undefined ? updates.content : existing.content,
     summary: updates.summary !== undefined ? updates.summary : existing.summary,
     source: updates.source !== undefined ? updates.source : existing.source,
+    importance: imp ?? 'medium',
     ttl,
     expires_at,
   };
@@ -442,7 +458,7 @@ const updateNode = db.transaction((id, updates) => {
   const version = existing.version + 1;
   db.prepare(
     `UPDATE nodes SET label=@label, type=@type, content=@content, summary=@summary,
-       source=@source, version=@version, updated_at=@updated_at, ttl=@ttl, expires_at=@expires_at WHERE id=@id`
+       source=@source, importance=@importance, version=@version, updated_at=@updated_at, ttl=@ttl, expires_at=@expires_at WHERE id=@id`
   ).run({ ...next, version, updated_at: new Date().toISOString(), id });
 
   if (updates.tags !== undefined) setTags(id, updates.tags);
@@ -502,6 +518,7 @@ function getNodeFull(id) {
     access_count: row.access_count, source: row.source, version: row.version,
     ttl: row.ttl, expires_at: row.expires_at,
     used_count: row.used_count, used_at: row.used_at,
+    importance: row.importance || 'medium',
   };
   for (const k of Object.keys(out)) if (out[k] === null) delete out[k];
   return out;
@@ -632,6 +649,7 @@ const revertNode = db.transaction((id, version) => {
 // operations.resolveWikilinks).
 function stripCode(content) {
   return String(content || '')
+    .replace(/(?:^|\n)( {4}[^\n]*\n?)+/g, '\n') // 4-Space-Einrückungen (Markdown-Code-Blöcke)
     .replace(/```[\s\S]*?```/g, '')
     .replace(/`[^`\n]*`/g, '');
 }
@@ -728,8 +746,10 @@ function searchSemantic(vec, limit = 10) {
 
 // Keyword-Ranking über FTS5 (bm25): [{ node_id, rank }] (rank klein = besser).
 function searchKeywordRanked(query, limit = 30) {
-  const terms = String(query || '').trim().split(/\s+/)
-    .map(t => t.replace(/["()*:^]/g, ''))
+  // Auf jedem Nicht-Wort-Zeichen trennen (Unicode-bewusst, Umlaute bleiben erhalten):
+  // zerlegt Bindestrich-Komposita ("Knowledge-Graph" → Knowledge, Graph) und neutralisiert
+  // FTS5-Sonderzeichen (-"():*^), die sonst als Operatoren geparst würden (z.B. "-" = NOT).
+  const terms = String(query || '').split(/[^\p{L}\p{N}]+/u)
     .filter(Boolean)
     .map(t => t + '*');
   if (terms.length === 0) return [];
@@ -750,18 +770,20 @@ function nodesNeedingEmbedding() {
   ).all();
 }
 
-// Access-Statistiken (access_count, accessed_at, used_count) für eine Knotenmenge.
+// Access-Statistiken (access_count, accessed_at, used_count, importance, type) für eine Knotenmenge.
 function getAccessStats(ids) {
   const map = new Map();
   if (!ids || ids.length === 0) return map;
   const ph = ids.map(() => '?').join(',');
   const rows = db.prepare(
-    `SELECT id, access_count, accessed_at, used_count, used_at FROM nodes WHERE id IN (${ph})`
+    `SELECT id, access_count, accessed_at, used_count, used_at, importance, type FROM nodes WHERE id IN (${ph})`
   ).all(...ids);
   for (const r of rows) {
     map.set(r.id, {
       access_count: r.access_count || 0, accessed_at: r.accessed_at,
       used_count: r.used_count || 0, used_at: r.used_at,
+      importance: r.importance || 'medium',
+      type: r.type || 'note',
     });
   }
   return map;
@@ -787,6 +809,13 @@ function dismissSuggestion(a, b) {
 
 function getDismissedPairs() {
   return new Set(db.prepare('SELECT pair_key FROM dismissed_suggestions').all().map(r => r.pair_key));
+}
+
+// Verworfene Vorschläge älter als `days` Tage löschen (verhindert unbegrenztes Wachstum).
+function pruneDismissedSuggestions(days = 90) {
+  return db.prepare(
+    `DELETE FROM dismissed_suggestions WHERE julianday(created) < julianday('now', ?)`
+  ).run(`-${days} days`).changes;
 }
 
 // 1-Hop-Nachbarn einer Knotenmenge (aus links-Tabelle, beide Richtungen).
@@ -823,6 +852,15 @@ function getAllEmbeddings() {
     map.set(r.node_id, new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4));
   }
   return map;
+}
+
+// Einzelnes Embedding als Float32Array (für KNN-per-Node in suggestLinks).
+function getEmbeddingRaw(id) {
+  if (!vecEnabled) return null;
+  const r = db.prepare('SELECT embedding FROM vec_nodes WHERE node_id = ?').get(id);
+  if (!r) return null;
+  const buf = r.embedding;
+  return new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
 }
 
 // Alle Links als Set sortierter "a|b"-Schlüssel (Existenz-Checks in O(1)).
@@ -948,6 +986,7 @@ module.exports = {
   logAction,
   getRecentLog,
   pruneLog,
+  pruneDismissedSuggestions,
   getStats,
   // Semantik
   upsertEmbedding,
@@ -960,6 +999,7 @@ module.exports = {
   getNeighborIds,
   getNeighborLinks,
   getAllEmbeddings,
+  getEmbeddingRaw,
   getAllLinkPairs,
   updateLink,
   markUsed,

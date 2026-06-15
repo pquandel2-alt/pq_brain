@@ -76,22 +76,47 @@ fi
 
   [ -n "$CONDENSED" ] || { log "leeres Transcript nach Kondensierung"; exit 0; }
 
+  # Few-Shot-Block aus vergangenen Inbox-Entscheidungen aufbauen.
+  # Bis zu 3 accepted + 3 rejected als Beispiele → verbessert Präzision ohne Fine-Tune.
+  FEW_SHOT_BLOCK=""
+  DECISIONS_RAW="$(curl -s --max-time 5 "${BRAIN_URL}/api/inbox/decisions?limit=30" 2>/dev/null || true)"
+  if [ -n "$DECISIONS_RAW" ] && echo "$DECISIONS_RAW" | jq -e '.items | length > 0' >/dev/null 2>&1; then
+    ACCEPTED="$(echo "$DECISIONS_RAW" | jq -r '.items | map(select(.decision=="accepted")) | .[0:3][] | "✓ \"" + .label + "\" (" + (.type//"note") + ") — " + (.summary//"dauerhaftes Wissen")' 2>/dev/null || true)"
+    REJECTED="$(echo "$DECISIONS_RAW" | jq -r '.items | map(select(.decision=="rejected")) | .[0:3][] | "✗ \"" + .label + "\" (" + (.type//"note") + ") — flüchtig/irrelevant"' 2>/dev/null || true)"
+    if [ -n "$ACCEPTED" ] || [ -n "$REJECTED" ]; then
+      FEW_SHOT_BLOCK="Lernbeispiele aus früheren Reviews:
+$([ -n "$ACCEPTED" ] && echo "BEHALTEN (accepted):
+$ACCEPTED")
+$([ -n "$REJECTED" ] && echo "VERWORFEN (rejected):
+$REJECTED")
+
+"
+    fi
+  fi
+
   PROMPT="$(cat <<'EOF'
 Du extrahierst dauerhaftes Wissen aus einem Coding-Session-Transcript für einen
 persönlichen Knowledge-Graph ("Brain"). Gib AUSSCHLIESSLICH gültiges JSON zurück:
 
-{"nodes":[{"label":"...","type":"note|idea|project|reference|memory","content":"...","summary":"...","tags":["..."]}]}
+{"nodes":[{"label":"...","type":"note|idea|project|reference|memory","content":"...","summary":"...","tags":["..."],"confidence":0.9}]}
 
 Regeln:
 - Nur DAUERHAFTE Erkenntnisse: getroffene Entscheidungen, gelöste Probleme/Patterns,
   Nutzer-Präferenzen, wichtige Fakten über Projekte/Tooling.
 - KEIN Smalltalk, keine flüchtigen Zwischenschritte, keine reinen Tool-Ausgaben.
 - label: prägnant, eindeutig. summary: 1 Satz. content: knappes Markdown.
+- confidence: 0.0–1.0. Hohe Werte (>=0.85) für klare, eindeutige Fakten/Entscheidungen.
+  Niedrige Werte für unsichere oder kontextabhängige Erkenntnisse.
 - Im Zweifel WENIGER. Wenn nichts Dauerhaftes dabei ist: {"nodes":[]}.
 - Maximal 5 Knoten.
 Gib nur das JSON aus, keine Erklärung, kein Markdown-Codeblock.
 EOF
 )"
+
+  # Few-Shot-Block voranstellen (nur wenn Beispiele vorhanden).
+  if [ -n "$FEW_SHOT_BLOCK" ]; then
+    PROMPT="${FEW_SHOT_BLOCK}${PROMPT}"
+  fi
 
   FULL_PROMPT="$PROMPT
 
@@ -131,6 +156,25 @@ $CONDENSED"
   CREATED="$(printf '%s' "$RESP" | jq -r '.created // "?"' 2>/dev/null || echo '?')"
   FAILED="$(printf '%s' "$RESP" | jq -r '.failed // "?"' 2>/dev/null || echo '?')"
   log "session=$SESSION_ID: created=$CREATED skipped/dup=$FAILED"
+
+  # Session-Knoten mit Zusammenfassung befüllen (Kurzzeitgedächtnis abschließen).
+  CACHE_DIR="${HOME}/.cache/brain"
+  SESSION_FILE="${CACHE_DIR}/session-${SESSION_ID}.id"
+  if [ -f "$SESSION_FILE" ]; then
+    NODE_ID="$(cat "$SESSION_FILE")"
+    NODE_LABELS="$(printf '%s' "$NODES" | jq -r '.[].label' 2>/dev/null | head -5 | tr '\n' ', ' | sed 's/,$//')"
+    SESSION_SUMMARY="Session beendet — ${CREATED} Erkenntnisse extrahiert: ${NODE_LABELS:-keine}"
+    SESSION_CONTENT="$(printf '%s' "$NODES" | jq -r '.[] | "- **" + .label + "**: " + (.summary // .content[:80] // "")' 2>/dev/null | head -10)"
+    UPDATE_PAYLOAD="$(jq -n \
+      --arg summary "$SESSION_SUMMARY" \
+      --arg content "$(printf '## Extrahierte Erkenntnisse\n%s' "$SESSION_CONTENT")" \
+      '{summary: $summary, content: $content, tags: ["session", "auto", "done"]}')"
+    curl -s --max-time 10 -X PUT "${BRAIN_URL}/api/nodes/${NODE_ID}" \
+      -H 'Content-Type: application/json' \
+      -d "$UPDATE_PAYLOAD" >>"$LOG" 2>&1 || true
+    rm -f "$SESSION_FILE" 2>/dev/null || true
+    log "session=$SESSION_ID: Session-Knoten $NODE_ID abgeschlossen"
+  fi
 ) &
 disown || true
 
